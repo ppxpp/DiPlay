@@ -62,4 +62,4 @@ This repository starts with a clean public source snapshot. Local research, test
 
 ## Local release packaging
 
-The release APK intentionally contains the experimental accessory identity. The Git repository and source archive exclude all accessory and Android signing keys; tests generate synthetic identities at runtime. Source/CI builds omit runtime identity assets by default. Local release builds explicitly select an external asset directory. Publishing the APK makes its bundled identity extractable; building locally does not preserve that identity's confidentiality.
+The mobile debug and release APKs bundle the experimental accessory identity from the project-local `.private/runtime-assets/offline-mfi/` directory by default. The directory is ignored by Git; fresh checkouts and CI must provision the two runtime files before building the mobile app. `DIPLAY_AUTH_ASSETS_DIR` overrides that directory. The Git repository and source archive exclude all accessory and Android signing keys; tests generate synthetic identities at runtime. Publishing an APK makes its bundled identity extractable; building locally does not preserve that identity's confidentiality.

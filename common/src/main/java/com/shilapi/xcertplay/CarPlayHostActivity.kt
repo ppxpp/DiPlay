@@ -188,6 +188,7 @@ class CarPlayHostActivity : ComponentActivity() {
         hostName = "diplay-" + DiPlayBootstrap.deviceId(airPlayIdentity).replace(":", "").lowercase(),
         hostMac = DiPlayBootstrap.deviceId(airPlayIdentity).split(":").map { it.toInt(16).toByte() }.toByteArray(),
         wirelessBluetoothDeviceAddress = DiPlayPreferences.phoneAddress(this),
+        remoteRfcommGateway = loadDebugRemoteRfcommGateway(),
         transport = if (wirelessEnabled) CarPlayTransport.WIRELESS else CarPlayTransport.WIRED,
         wirelessHotspotMode = wirelessHotspotMode,
         wifiP2pPreferredChannel = AirPlayPersistence.loadWifiP2pPreferredChannel(this),
@@ -201,6 +202,18 @@ class CarPlayHostActivity : ComponentActivity() {
         locationReportingEnabled = locationReportingEnabled,
         availableCurrentMilliAmps = AirPlayPersistence.loadUsbChargingCurrent(this).milliAmps,
     )
+
+    private fun loadDebugRemoteRfcommGateway(): com.shilapi.xcertplay.orchestration.RemoteRfcommGateway? {
+        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE == 0) return null
+        val file = File(filesDir, "remote-probe.json")
+        if (!file.isFile) return null
+        val json = org.json.JSONObject(file.readText())
+        return com.shilapi.xcertplay.orchestration.RemoteRfcommGateway(
+            json.getString("gatewayBluetoothMac"), json.getString("token"),
+            json.optInt("observedHotspotChannel", 0).takeIf { it > 0 },
+            json.optString("observedHotspotAddress").takeIf { it.isNotBlank() },
+        )
+    }
 
     private val vpnConsent =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->

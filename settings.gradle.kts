@@ -25,6 +25,7 @@ dependencyResolutionManagement {
 rootProject.name = "xcertplay"
 include(":common")
 include(":mobile")
+include(":bt-proxy-android")
 include(":automotive")
 include(":shared")
 include(":maphost")

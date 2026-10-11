@@ -4,7 +4,16 @@ Instructions for coding agents that work on DiPlay.
 
 ## Checks
 
-Run the CI command from `.github/workflows/android.yml` before you report a change as done:
+Follow the [project agent requirements](docs/PROJECT_AGENT_REQUIREMENTS.md): prioritize rapid technical
+validation with the smallest runnable change. Do not require detailed development
+plans, TDD, new unit tests for every change, or full regression/lint/CI runs by default.
+Use only the checks needed for the current change, such as a target-module build,
+a device smoke check, or diagnostic logs. Report what was and was not verified.
+Additional tests are appropriate when explicitly requested or necessary for the
+specific change. This policy takes precedence over mandatory test or screenshot
+requirements elsewhere in this file; the implementation conventions still apply.
+
+The full CI command from `.github/workflows/android.yml` remains available when needed:
 
 ```sh
 ./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :home:testDebugUnitTest \

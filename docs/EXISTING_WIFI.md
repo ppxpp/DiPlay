@@ -72,8 +72,9 @@ Bonjour control-service events alone does not prove that CarPlay discovery faile
 
 ## Builds
 
-A source-only debug APK omits runtime accessory authentication. Use the existing
-`:mobile:assembleStandaloneDebug` task with the explicit external assets described in
-[BUILD.md](BUILD.md), following [SECURITY.md](../SECURITY.md). Authentication inputs and
-Android signing material must remain outside Git. The app signing key is separate
-from the CarPlay accessory identity.
+The mobile debug and release APKs bundle the local accessory identity from
+`.private/runtime-assets/offline-mfi/` by default. Both `:mobile:assembleDebug`
+and `:mobile:assembleStandaloneDebug` use these files; `DIPLAY_AUTH_ASSETS_DIR`
+can override the asset directory. See [BUILD.md](BUILD.md) and [SECURITY.md](../SECURITY.md).
+Runtime identity files and Android signing material remain outside Git.
+The app signing key is separate from the CarPlay accessory identity.

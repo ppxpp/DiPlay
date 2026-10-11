@@ -11,6 +11,7 @@ Select `mobile` to build the main DiPlay app.
 | Gradle module | Purpose | Debug APK |
 | --- | --- | --- |
 | `:mobile` | Main DiPlay app for Android head units | `mobile/build/outputs/apk/debug/mobile-debug.apk` |
+| `:bt-proxy-android` | Android A Bluetooth proxy PoC ([module guide](../bt-proxy-android/README.md)) | `bt-proxy-android/build/outputs/apk/debug/bt-proxy-android-debug.apk` |
 | `:maphost` | Sample application that displays a map from DiPlay | `samples/maphost/build/outputs/apk/debug/maphost-debug.apk` |
 | `:home` | Optional DiPlay Home launcher | `samples/home/build/outputs/apk/debug/home-debug.apk` |
 | `:automotive` | Separate Android Automotive application inherited from xcertplay | `automotive/build/outputs/apk/debug/automotive-debug.apk` |
@@ -61,7 +62,8 @@ On Windows, use `gradlew.bat` in place of `./gradlew` in the commands below.
 
 ## Build the main app
 
-For a source build without runtime authentication assets:
+The mobile app bundles the locally provisioned accessory identity by default.
+Build the debug APK:
 
 ```sh
 ./gradlew :mobile:assembleDebug
@@ -76,9 +78,12 @@ mobile/build/outputs/apk/debug/mobile-debug.apk
 The debug application ID is `com.shihab.diplay.hudtest`.
 The release application ID is `com.shihab.diplay`.
 
-The source APK contains no accessory identity unless you supply runtime authentication assets.
-Standalone CarPlay needs these assets to connect to an iPhone.
-Use the car-test procedure below for that purpose.
+Both debug and release builds load `identity.pk8` and `certificate.p7b` from
+`.private/runtime-assets/offline-mfi/` by default. This Git-ignored project-local
+copy was extracted from `DiPlay-0.2.17.apk`. No environment variable is needed
+for subsequent local builds. Missing or empty files stop the build; fresh
+checkouts and CI must provision the files before building `:mobile`.
+`DIPLAY_AUTH_ASSETS_DIR` can select a different runtime asset directory.
 Tests generate synthetic identities at runtime.
 Keep test private keys outside Git.
 
@@ -108,10 +113,10 @@ That workflow also checks and builds the `home` and `maphost` applications.
 
 ## Build a standalone car-test APK
 
-Prepare an external directory with these runtime authentication files:
+The default project-local directory contains these runtime authentication files:
 
 ```text
-runtime-assets/
+.private/runtime-assets/
 └── offline-mfi/
     ├── identity.pk8
     └── certificate.p7b
@@ -121,12 +126,21 @@ Use only the intended runtime files in this directory.
 Keep the directory and its private key outside Git.
 The build rejects unexpected credential containers in APK assets.
 
-1. Set `DIPLAY_AUTH_ASSETS_DIR` to the absolute directory path.
-2. Run the standalone debug task.
+An optional `.private/runtime-assets/network/hotspot.json` also bundles the local
+test hotspot defaults (`ssid`, `passphrase`, `band`, `channel`, `security`). On
+first launch it fills an unconfigured manual hotspot and selects wireless manual
+hotspot mode. Existing settings and subsequent edits are preserved. This profile
+is included in both debug and release mobile APKs and remains outside Git;
+it does not turn on Android's system hotspot automatically.
+
+Run the standalone debug task (ordinary `:mobile:assembleDebug` also bundles the identity):
 
 ```sh
-DIPLAY_AUTH_ASSETS_DIR=/absolute/path/to/runtime-assets ./gradlew :mobile:assembleStandaloneDebug
+./gradlew :mobile:assembleStandaloneDebug
 ```
+
+To override the default, set `DIPLAY_AUTH_ASSETS_DIR` to a different asset directory
+containing the same `offline-mfi/` structure.
 
 The task stops if either required file is absent or empty.
 Its APK output is `mobile/build/outputs/apk/debug/mobile-debug.apk`.
@@ -146,7 +160,7 @@ Set these environment variables locally:
 
 | Variable | Value |
 | --- | --- |
-| `DIPLAY_AUTH_ASSETS_DIR` | Absolute path to the runtime assets directory |
+| `DIPLAY_AUTH_ASSETS_DIR` | Optional override; defaults to `.private/runtime-assets` in the project root |
 | `ANDROID_KEYSTORE_PATH` | Path to your Android signing keystore |
 | `ANDROID_KEYSTORE_PASSWORD` | Keystore password |
 | `ANDROID_KEY_ALIAS` | Signing key alias |
@@ -177,6 +191,6 @@ The retired `build-beta.py` helper is no longer part of the build procedure.
 | Gradle cannot find the Android SDK | Set `ANDROID_HOME` or the `sdk.dir` value in `local.properties`. |
 | A required SDK or NDK package is absent | Install the listed package with SDK Manager. |
 | Java or Gradle JDK version is incorrect | Set the terminal JDK and Android Studio Gradle JDK to Java 25. |
-| Source APK cannot start standalone CarPlay | Supply runtime authentication assets. Use `:mobile:assembleStandaloneDebug`. |
+| Authentication asset check fails | Restore the two files under `.private/runtime-assets/offline-mfi/`, or set `DIPLAY_AUTH_ASSETS_DIR`. |
 | Standalone task reports missing authentication files | Check the external directory path and both required files. |
 | Android rejects an app update | Use the same application ID and signing key as the installed app. |

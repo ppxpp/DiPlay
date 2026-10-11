@@ -1,0 +1,22 @@
+<resources>
+    <string name="app_name">DiPlay Bluetooth Proxy</string>
+    <string name="title">Android A · 蓝牙代理 PoC</string>
+    <string name="description">本应用用于 Android A 的蓝牙连接与字节透传验证。请先在系统设置中将本机与 iPhone 配对。</string>
+    <string name="scope">选择已配对的 iPhone，查询 SDP 后尝试 RFCOMM。连接最多等待 15 秒，成功后只接收观察 10 秒；不发送测试数据。另可验证 iAP2 双向握手，此模式发送真实协议报文，最多等待 20 秒。认证及完整 CarPlay 尚未验证。</string>
+    <string name="query_sdp">查询 SDP 服务</string>
+    <string name="connect_rfcomm">验证 RFCOMM 连接</string>
+    <string name="handshake_iap2">验证 iAP2 双向握手</string>
+    <string name="start_gateway">启动 Wi-Fi 蓝牙透传代理</string>
+    <string name="stop_gateway">停止蓝牙透传代理</string>
+    <string name="disconnect">断开连接</string>
+    <string name="copy_log">复制日志</string>
+    <string name="no_devices">没有已配对设备，请检查权限和系统蓝牙配对</string>
+    <string name="grant_permission">申请蓝牙权限</string>
+    <string name="open_bluetooth_settings">打开蓝牙设置</string>
+    <string name="refresh">刷新环境状态</string>
+    <string name="environment">设备：%1$s %2$s\nAndroid：%3$s（API %4$d）\n蓝牙：%5$s</string>
+    <string name="bluetooth_unavailable">不支持</string>
+    <string name="bluetooth_permission_missing">未授权，请申请蓝牙权限</string>
+    <string name="bluetooth_on">已开启</string>
+    <string name="bluetooth_off">未开启，请在系统设置中开启</string>
+</resources>

@@ -4,7 +4,13 @@ import android.content.Context
 import com.shilapi.xcertplay.airplay.AirPlayIdentity
 import com.shilapi.xcertplay.mfi.LocalMfiAuthenticationClient
 import com.shilapi.xcertplay.orchestration.MfiTarget
+import com.shilapi.xcertplay.orchestration.ManualHotspotBand
+import com.shilapi.xcertplay.orchestration.ManualHotspotSecurity
+import com.shilapi.xcertplay.orchestration.ManualHotspotValidation
+import com.shilapi.xcertplay.orchestration.WirelessHotspotMode
+import org.json.JSONObject
 import java.io.File
+import java.io.FileNotFoundException
 import java.security.MessageDigest
 
 /** Installs the private beta's experimental identity. It has no remote fallback. */
@@ -12,6 +18,7 @@ internal object DiPlayBootstrap {
     @Volatile private var ready = false
 
     @Synchronized fun ensure(context: Context, mfiTarget: MfiTarget) {
+        installHotspotDefaults(context)
         if (mfiTarget != MfiTarget.LOCAL) return
         if (ready) return
         val target = File(context.noBackupFilesDir, LocalMfiAuthenticationClient.DIRECTORY)
@@ -39,6 +46,40 @@ internal object DiPlayBootstrap {
         LocalMfiAuthenticationClient.load(target)
         AirPlayPersistence.saveDebugLogsEnabled(context, false)
         ready = true
+    }
+
+    /** Optional private APK defaults; never replace a user's saved hotspot. */
+    private fun installHotspotDefaults(context: Context) {
+        val prefs = context.getSharedPreferences("diplay", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("bundled_hotspot_applied", false)) return
+        val profile = try {
+            context.assets.open("network/hotspot.json").bufferedReader().use {
+                JSONObject(it.readText())
+            }
+        } catch (_: FileNotFoundException) {
+            return
+        }
+        val ssid = profile.getString("ssid")
+        val passphrase = profile.getString("passphrase")
+        val band = ManualHotspotBand.valueOf(profile.getString("band"))
+        val security = ManualHotspotSecurity.valueOf(profile.getString("security"))
+        val channel = profile.getInt("channel")
+        require(ManualHotspotValidation.error(ssid, passphrase) == null && channel in 0..196) {
+            "Invalid bundled hotspot configuration"
+        }
+        require((security == ManualHotspotSecurity.OPEN) == passphrase.isEmpty()) {
+            "Invalid bundled hotspot security"
+        }
+        if (AirPlayPersistence.loadManualHotspotSsid(context).isBlank()) {
+            AirPlayPersistence.saveManualHotspotSsid(context, ssid)
+            AirPlayPersistence.saveManualHotspotPassphrase(context, passphrase)
+            AirPlayPersistence.saveManualHotspotBand(context, band)
+            AirPlayPersistence.saveManualHotspotChannel(context, channel)
+            AirPlayPersistence.saveManualHotspotSecurity(context, security)
+            AirPlayPersistence.saveWirelessHotspotMode(context, WirelessHotspotMode.MANUAL)
+            AirPlayPersistence.saveWirelessEnabled(context, true)
+        }
+        prefs.edit().putBoolean("bundled_hotspot_applied", true).apply()
     }
 
     fun deviceId(identity: AirPlayIdentity): String {
