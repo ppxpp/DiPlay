@@ -5,6 +5,8 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import com.shilapi.xcertplay.vehicle.api.AudioRouteController
+import com.shilapi.xcertplay.vehicle.api.DefaultAudioRouteController
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -58,8 +60,13 @@ class AudioFocusAutoYieldTest {
     }
 
     @Config(sdk = [25])
-    @Test fun pioneerGuidanceKeepsTheMediaSourceFocusUntilMediaStops() {
-        val coordinator = AudioFocusCoordinator(context, false, pioneerRouting = true)
+    @Test fun independentGuidanceKeepsTheMediaSourceFocusUntilMediaStops() {
+        val routing = object : AudioRouteController by DefaultAudioRouteController {
+            override fun focusStream(attributes: AudioAttributes): Int? =
+                attributes.contentType.takeIf { it in 400..401 }
+            override fun independentSpeechFocus(attributes: AudioAttributes) = focusStream(attributes) == 400
+        }
+        val coordinator = AudioFocusCoordinator(context, false, audioRouting = routing)
             .also(coordinators::add)
         val media = track(); val navigation = track(); val assistant = track()
         val mediaAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build()

@@ -28,6 +28,7 @@
         android:required="false" />
 
     <queries>
+        <package android:name="com.tencent.wecarflow" />
         <package android:name="com.byd.carsettings" />
         <package android:name="com.byd.appmgr" />
         <package android:name="com.byd.deviceinfo" />

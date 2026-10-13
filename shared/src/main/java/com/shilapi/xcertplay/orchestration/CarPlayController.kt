@@ -245,6 +245,10 @@ class CarPlayController(
 
     /** Told when the iPhone starts or stops playing media; may run on any thread. */
     @Volatile var playbackListener: ((Boolean) -> Unit)? = null
+    /** Synchronous lifecycle hook for optional extensions, before UI delivery. */
+    @Volatile var vehicleSessionListener: ((Any, Boolean) -> Unit)? = null
+    /** Same identity used by lifecycle notifications; not the screen/HID stream token. */
+    fun activeSessionIdentity(): Any? = activeSession?.takeUnless { closed || it.isClosed }
 
     /** Told when retained iPhone now-playing metadata changes; may run on any thread. */
     @Volatile var nowPlayingListener: ((com.shilapi.xcertplay.media.CarPlayNowPlaying) -> Unit)? = null
@@ -321,6 +325,7 @@ class CarPlayController(
                 }
             }
             activeSession = session
+            if (replacement) vehicleSessionListener?.invoke(session, true)
             val btPrefs = appContext.getSharedPreferences("xcertplay_airplay", android.content.Context.MODE_PRIVATE)
             if (btPrefs.getBoolean("bt_suspend_during_carplay", false)) {
                 // close() marks [closed], and a closing session marks itself before onSessionEnded
@@ -340,6 +345,7 @@ class CarPlayController(
         override fun onSessionEnded(session: AirPlaySession) {
             if (activeSession === session) {
                 activeSession = null
+                vehicleSessionListener?.invoke(session, false)
                 synchronized(albumReplayLock) { initialArtworkReplay = null }
                 BydNavigationOutputs.endNow(preserveTurnOverlay = !closed && config.transport == CarPlayTransport.WIRELESS)
                 BydBluetoothSuspend.resume(appContext, this@CarPlayController)
@@ -625,6 +631,7 @@ class CarPlayController(
             wirelessGeneration.incrementAndGet()
             dashboardMapOutputVisible = false
         }
+        activeSession?.let { vehicleSessionListener?.invoke(it, false) }
         firstTcpWatchdog?.terminate()
         BydBluetoothSuspend.resume(appContext, this)
         startupTimer.shutdownNow()

@@ -1,4 +1,4 @@
-package com.shilapi.xcertplay.media
+package com.shilapi.xcertplay.vehicle.adapters.pioneer
 
 import android.content.ComponentName
 import android.content.Context
@@ -8,10 +8,13 @@ import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Build
 import android.view.KeyEvent
+import com.shilapi.xcertplay.media.AudioChannel
+import com.shilapi.xcertplay.vehicle.api.AudioRouteController
+import com.shilapi.xcertplay.vehicle.api.DefaultAudioRouteController
 
 /** Pioneer firmware encodes both its output bus and MediaManager token in contentType. */
-internal object PioneerAudioRouting {
-    val available: Boolean by lazy {
+internal object PioneerAudioRouteAdapter : AudioRouteController {
+    override val available: Boolean by lazy {
         Build.VERSION.SDK_INT == 25 && runCatching {
             AudioManager::class.java.getField("STREAM_TAI_WECARFLOW_MEDIA").getInt(null) == 401 &&
                 AudioManager::class.java.getField("STREAM_AMAP_NAVI_GUIDE").getInt(null) == 400 &&
@@ -19,16 +22,24 @@ internal object PioneerAudioRouting {
         }.getOrDefault(false)
     }
 
-    fun streamType(channel: AudioChannel): Int? = if (!available) null else when (channel) {
+    override fun streamType(channel: AudioChannel): Int? = if (!available) null else when (channel) {
         AudioChannel.MEDIA -> 401 // FRONT bus, com.tencent.wecarflow.media token
         else -> 400 // MIX bus, same navigation token/path as Amap
     }
 
-    fun focusStream(attributes: AudioAttributes): Int? =
+    override fun focusStream(attributes: AudioAttributes): Int? =
         attributes.contentType.takeIf { available && it in 400..401 }
 
+    override val nonBlockingWrites: Boolean get() = available
+
+    override fun independentSpeechFocus(attributes: AudioAttributes): Boolean =
+        focusStream(attributes) == 400
+
+    override fun acceptsLegacyStream(stream: Int): Boolean =
+        DefaultAudioRouteController.acceptsLegacyStream(stream) || (available && stream in 400..401)
+
     /** Audio focus alone cannot switch from FM/BT to TAI_AUDIO on this firmware. */
-    fun selectMediaSource(report: (String) -> Unit) {
+    override fun selectMediaSource(report: (String) -> Unit) {
         if (!available) return
         runCatching {
             val controllerClass = Class.forName("jp.pioneer.ceam.MediaManager.MediaController")
@@ -46,7 +57,7 @@ internal object PioneerAudioRouting {
     }
 
     /** The factory player shares source 300; pause it rather than mixing two music players. */
-    fun pauseSourcePlayer(context: Context?, report: (String) -> Unit) {
+    override fun pauseLocalPlayer(context: Context?, report: (String) -> Unit) {
         if (!available || context == null) return
         runCatching {
             context.sendBroadcast(Intent(Intent.ACTION_MEDIA_BUTTON).apply {

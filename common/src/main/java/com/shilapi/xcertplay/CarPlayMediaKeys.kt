@@ -77,13 +77,17 @@ internal object CarPlayMediaKeys {
         }
         appContext = context.applicationContext
         controller = next
+        com.shilapi.xcertplay.vehicle.DiPlayVehicleIntegration.attach(context, next)
         GeelyWheelKeys.start(context)
         com.shilapi.xcertplay.media.AmbientMusicController.claimPlaybackOwner(next)
         next.playbackListener = { playing ->
             com.shilapi.xcertplay.media.AmbientMusicController.phonePlaybackChanged(next, playing)
             onIphonePlaying(next, playing)
         }
-        next.nowPlayingListener = { _ -> onNowPlayingChanged(next) }
+        next.nowPlayingListener = { update ->
+            com.shilapi.xcertplay.vehicle.DiPlayVehicleIntegration.nowPlaying(next, update)
+            onNowPlayingChanged(next)
+        }
         next.artworkListener = { id, bytes -> onArtworkChanged(next, id, bytes) }
         val retained = next.nowPlayingSnapshot()
         onNowPlayingChanged(next)
@@ -95,6 +99,7 @@ internal object CarPlayMediaKeys {
     fun detach(expected: CarPlayController?) {
         if (expected == null || controller !== expected) return
         com.shilapi.xcertplay.media.AmbientMusicController.releasePlaybackOwner(expected)
+        com.shilapi.xcertplay.vehicle.DiPlayVehicleIntegration.detach(expected)
         expected.playbackListener = null
         expected.nowPlayingListener = null
         expected.artworkListener = null
@@ -272,7 +277,8 @@ internal object CarPlayMediaKeys {
 
     private fun start(context: Context) {
         val expectedController = controller ?: return
-        val focusDisabled = AirPlayPersistence.loadDisableMediaKeyAudioFocus(context)
+        val focusDisabled = AirPlayPersistence.loadDisableMediaKeyAudioFocus(context) ||
+            com.shilapi.xcertplay.vehicle.runtime.VehicleAudioRouting.available
         val granted = if (focusDisabled) {
             // Some OEMs route physical volume buttons to the focus owner. Keep an active
             // MediaSession without permanent focus so those buttons remain vehicle-owned.

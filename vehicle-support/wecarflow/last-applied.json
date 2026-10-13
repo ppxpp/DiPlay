@@ -1,0 +1,64 @@
+{
+  "package": "com.gtmc.app.fengyunyx.b819",
+  "certificates": [
+    "52c7f1c15b3add07c0bd7503177a73a965a329625c3f7079bfaf382e5f0e3f01"
+  ],
+  "peerProcesses": [
+    ":boot",
+    ":dexopt",
+    ":heap_analysis",
+    ":wns"
+  ],
+  "hooks": {
+    "smali_classes2/com/tencent/qqmusicsdk/player/playermanager/AudioPlayerManager.smali": [
+      "public final N0(ZI)I",
+      "private final O0(Lcom/tencent/qqmusicsdk/player/playermanager/APlayer;ZI)I",
+      "public final y0(Lcom/tencent/qqmusicsdk/protocol/SongInfomation;I)I",
+      "public final l1(Lcom/tencent/qqmusicsdk/protocol/SongInfomation;ZZIZ)V",
+      "private final g1(Lcom/tencent/qqmusicsdk/player/PlayInfoStruct;)I"
+    ],
+    "smali_classes2/com/tencent/qqmusic/player/component/AndroidMediaPlayer.smali": [
+      "public play()V"
+    ],
+    "smali_classes2/com/tencent/qqmusic/player/component/EdgeThumbPlayer.smali": [
+      "public play()V"
+    ],
+    "smali_classes2/com/tencent/qqmusic/player/component/AndroidMediaPlayer$play$1.smali": [
+      "public final invoke()V"
+    ],
+    "smali_classes2/com/tencent/qqmusic/player/component/EdgeThumbPlayer$play$1.smali": [
+      "public final invoke()V"
+    ],
+    "smali_classes2/com/tencent/qqmusic/mediaplayer/system/AndroidMediaPlayer.smali": [
+      "public I()V"
+    ],
+    "smali_classes2/com/tencent/qqmusicsdk/player/playlist/PlayListManager.smali": [
+      "public B(ZI)I"
+    ],
+    "smali_classes2/com/tencent/qqmusic/qplayer/core/player/playlist/MusicPlayListManager.smali": [
+      "public final z(ZI)I",
+      "public final b(ZI)V"
+    ],
+    "smali_classes2/com/tencent/qqmusic/qplayer/core/PlayerManagerImpl.smali": [
+      "public next()I",
+      "public next(I)I",
+      "public prev()I",
+      "public prev(I)I",
+      "public play()I",
+      "public play(I)I",
+      "public playPos(I)I",
+      "public playPos(IIZ)I",
+      "public playSongs(Lcom/tencent/qqmusic/openapisdk/model/PlayParam;)I",
+      "public playSongs(Ljava/util/List;I)I",
+      "public playCachedSongs(Ljava/util/List;I)I",
+      "public playRadio(Ljava/util/List;Ljava/lang/String;ZLkotlin/jvm/functions/Function1;)I"
+    ]
+  },
+  "registeredPlayers": [
+    "smali_classes2/com/tencent/qqmusicsdk/player/playermanager/AudioPlayerManager.smali",
+    "smali_classes2/com/tencent/qqmusic/player/component/AndroidMediaPlayer.smali",
+    "smali_classes2/com/tencent/qqmusic/player/component/EdgeThumbPlayer.smali",
+    "smali_classes2/com/tencent/qqmusic/mediaplayer/system/AndroidMediaPlayer.smali"
+  ],
+  "bridgeAvailable": true
+}

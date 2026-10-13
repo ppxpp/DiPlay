@@ -32,6 +32,8 @@ android {
         // Geely/Lynk head-unit input API (com.geely.inputservice); declarations in src/main/aidl.
         aidl true
     }
+    // Locally provisioned vendor SDK assets; never commit proprietary runtime binaries.
+    sourceSets.main.assets.srcDir(rootProject.file('.private/vehicle-runtime-assets'))
     compileOptions {
         coreLibraryDesugaringEnabled true
         sourceCompatibility = JavaVersion.VERSION_11

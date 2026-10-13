@@ -7,7 +7,7 @@ internal enum class AudioChannelMappingMode {
     AUTOMOTIVE_BUS,
 }
 
-internal enum class AudioChannel {
+enum class AudioChannel {
     MEDIA,
     PHONE,
     ASSISTANT,
