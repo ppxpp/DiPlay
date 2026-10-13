@@ -4,11 +4,10 @@
 
 ```sh
 python3 vehicle-support/wecarflow/apply_guard.py \
-  --apktool-dir /path/to/qqmusic/apktool/qqmusic \
-  --diplay-apk /path/to/DiPlay-signed.apk
+  --apktool-dir /path/to/qqmusic/apktool/qqmusic
 ```
 
-需要 JDK、Android SDK 的 `android.jar`/`d8`/`apksigner` 与 `apktool`。SDK 从 `ANDROID_HOME`、`ANDROID_SDK_ROOT` 或 macOS 默认位置读取。`--compile-only` 编译 Java/d8 并生成 smali，不写目标；额外合法证书用 `--extra-certificate SHA256`，可以重复指定。脚本先验证 APK 签名与每个精确方法签名，缺失/重复或没有现有 v0 局部寄存器时直接报错，不按模糊名字猜入口。重跑按标记跳过已存在的注入，重新生成服务 smali 和 manifest 专用块。`last-applied.json` 记录最新应用的证书与覆盖清单。
+需要 JDK、Android SDK 的 `android.jar`/`d8` 与 `apktool`。SDK 从 `ANDROID_HOME`、`ANDROID_SDK_ROOT` 或 macOS 默认位置读取。`--compile-only` 编译 Java/d8 并生成 smali，不写目标。脚本先验证每个精确方法签名，缺失/重复或没有现有 v0 局部寄存器时直接报错，不按模糊名字猜入口。重跑按标记跳过已存在的注入，重新生成服务 smali 和 manifest 专用块。`last-applied.json` 记录授权方式与覆盖清单。
 
 ## IPC 和授权
 
@@ -21,7 +20,7 @@ python3 vehicle-support/wecarflow/apply_guard.py \
 
 owner IBinder 同时是控制回调：使用相同 descriptor、code 1、int command（1 PLAY、2 PAUSE、4 NEXT、5 PREVIOUS），读取客户端 bool reply。仪表 STOP 映射 PAUSE。控制结果只回复发起请求的 Messenger，不群发；CarPlay 状态以真实元数据回传为准，不靠控制动作猜测 playing。release/death 自动清除 remote，无需额外 code 5。
 
-所有业务事务核验 calling UID 下存在 `com.gtmc.app.fengyunyx.b819`，且该包 UID 和所有签名 SHA256 都在编译时生成的允许表中。当前参考 APK 签名证书的 SHA256 为 `52c7f1c15b3add07c0bd7503177a73a965a329625c3f7079bfaf382e5f0e3f01`。不会读取 keystore 或配置无签名放行。
+所有业务事务核验 calling UID 下存在 `com.gtmc.app.fengyunyx.b819`，并核对已安装的该包 UID 与调用 UID 一致。按用户要求不校验 DiPlay 签名证书，不生成证书允许表；后续更换 DiPlay 签名无需修改 QQ 补丁。发布和解除仍需相同 UID、相同 owner 租约，Binder death 处理保留。
 
 单 owner 租约仅存在内存中，Binder death、release、服务销毁解除；不会在磁盘保存 bool，也不会在解除时自动恢复歌曲。暂停屏障失败回复 0 并撤销保护，让客户端使用其回退策略。排队的暂停任务在超时/中断后取消并移除；执行前重新检查主进程保护状态。已经进入播放器暂停方法的调用无法完全撤销。acquire 必须在客户端后台线程执行：每进程主线程暂停等待最多 5 秒，其他进程 provider 冷启动还受系统调度影响。
 

@@ -90,8 +90,6 @@ def register_constructors(source):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apktool-dir', type=Path, required=True)
-    parser.add_argument('--diplay-apk', type=Path, required=True)
-    parser.add_argument('--extra-certificate', action='append', default=[], help='Additional SHA256, never unsigned bypass')
     parser.add_argument('--compile-only',action='store_true')
     parser.add_argument('--bridge-src',type=Path,help='Existing scripts/wecarflow_bridge_src; auto-detected from apktool directory')
     args = parser.parse_args()
@@ -113,15 +111,6 @@ def main():
     sdk = Path(os.environ.get('ANDROID_HOME', os.environ.get('ANDROID_SDK_ROOT',str(Path.home()/'Library/Android/sdk'))))
     android_jar = latest((sdk/'platforms').glob('*/android.jar'))
     d8 = latest((sdk/'build-tools').glob('*/d8'))
-    signer = d8.parent/'apksigner'
-    cert_output = subprocess.check_output([str(signer),'verify','--print-certs',str(args.diplay_apk)],text=True)
-    certs = re.findall(r'Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})',cert_output)
-    if not certs: raise RuntimeError('No verified APK signer')
-    for extra in args.extra_certificate:
-        extra = extra.replace(':','').lower()
-        if not re.fullmatch(r'[0-9a-f]{64}',extra): raise RuntimeError('Invalid SHA256')
-        certs.append(extra)
-    certs = sorted(set(c.lower() for c in certs))
     authorities = ['com.tencent.wecarflow.carplayguard.peer'+str(i) for i in range(len(processes))]
     # Validate every target before compiling or changing target files.
     patched = {}
@@ -140,7 +129,6 @@ def main():
         package=sources/'com/tencent/wecarflow/carplayguard'
         config = ('package com.tencent.wecarflow.carplayguard;\nfinal class GuardConfig {\n'
                   'static final String PACKAGE = "com.gtmc.app.fengyunyx.b819";\n'
-                  'static final String[] CERTIFICATES = '+array(certs)+';\n'
                   'static final String[] PEER_AUTHORITIES = '+array(authorities)+';\n'
                   'static final String[] PEER_PROCESSES = '+array(processes)+';\n'
                   'static final boolean BRIDGE_AVAILABLE = '+str(bool(bridge_sources)).lower()+';\n}\n')
@@ -185,7 +173,7 @@ def main():
         block='\n    <!-- CARPLAY_GUARD_V1_BEGIN -->\n'+''.join('        '+entry+'\n' for entry in entries)+'    <!-- CARPLAY_GUARD_V1_END -->\n'
         text=text.replace('    </application>',block+'    </application>')
         ET.fromstring(text); manifest.write_text(text)
-        record={'package':'com.gtmc.app.fengyunyx.b819','certificates':certs,'peerProcesses':processes,
+        record={'package':'com.gtmc.app.fengyunyx.b819','authorization':'package-and-uid','peerProcesses':processes,
                 'hooks':HOOKS,'registeredPlayers':REGISTER,'bridgeAvailable':bool(bridge_sources)}
         (HERE/'last-applied.json').write_text(json.dumps(record,ensure_ascii=False,indent=2)+'\n')
         print('Applied guard smali and '+str(sum(map(len,HOOKS.values())))+' exact playback hooks; no full APK built')

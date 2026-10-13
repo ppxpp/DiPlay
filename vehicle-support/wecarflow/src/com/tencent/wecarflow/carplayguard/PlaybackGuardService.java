@@ -2,15 +2,11 @@ package com.tencent.wecarflow.carplayguard;
 
 import android.app.Service;
 import android.content.Intent;
-import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.content.pm.Signature;
 import android.os.Binder;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.RemoteException;
-import java.security.MessageDigest;
-import java.util.Locale;
 
 /** Explicit bound service, raw Binder v1. No platform volume/source changes. */
 public final class PlaybackGuardService extends Service {
@@ -61,17 +57,7 @@ public final class PlaybackGuardService extends Service {
             boolean found = false;
             if (packages != null) for (String pkg : packages) if (GuardConfig.PACKAGE.equals(pkg)) found = true;
             if (!found) return false;
-            PackageInfo info = pm.getPackageInfo(GuardConfig.PACKAGE, PackageManager.GET_SIGNATURES);
-            if (info.applicationInfo.uid != uid || info.signatures == null || info.signatures.length == 0) return false;
-            for (Signature signature : info.signatures) {
-                byte[] hash = MessageDigest.getInstance("SHA-256").digest(signature.toByteArray());
-                StringBuilder hex = new StringBuilder();
-                for (byte b : hash) hex.append(String.format(Locale.US, "%02x", b & 255));
-                boolean allowed = false;
-                for (String cert : GuardConfig.CERTIFICATES) if (cert.equals(hex.toString())) allowed = true;
-                if (!allowed) return false;
-            }
-            return true;
+            return pm.getApplicationInfo(GuardConfig.PACKAGE, 0).uid == uid;
         } catch (Exception e) { return false; }
     }
     private boolean acquire(int uid, final IBinder token) {

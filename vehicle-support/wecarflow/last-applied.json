@@ -1,8 +1,6 @@
 {
   "package": "com.gtmc.app.fengyunyx.b819",
-  "certificates": [
-    "52c7f1c15b3add07c0bd7503177a73a965a329625c3f7079bfaf382e5f0e3f01"
-  ],
+  "authorization": "package-and-uid",
   "peerProcesses": [
     ":boot",
     ":dexopt",
