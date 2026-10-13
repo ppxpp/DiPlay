@@ -13,7 +13,7 @@ python3 vehicle-support/wecarflow/apply_guard.py \
 
 显式组件为 `com.tencent.wecarflow/com.tencent.wecarflow.carplayguard.PlaybackGuardService`，服务在 QQ 主进程。raw Binder descriptor 为 `com.shilapi.xcertplay.vehicle.LocalPlaybackGuard.v1`。客户端写 interface token 后：
 
-- code 1：写入媒体回调 IBinder；回复 `writeNoException()` 和 int bool。同步置保护并暂停已存在播放器成功后返回 1；已经启用时更新回调，不重复暂停。
+- code 1：写入媒体回调 IBinder；回复 `writeNoException()` 和 int bool。开启连接保护后返回 1，同时尽力暂停已有播放器；暂停检查失败不撤销未来播放的拦截。已经启用时更新回调，不重复暂停。
 - code 2：为兼容现有协议读入 IBinder 字段，但不校验，直接解除保护，回复 int bool。
 - code 3：无参数；回复当前 guarded ready 的 int bool。
 - code 4：写入兼容用 IBinder 字段、title/artist/album 三个 String、durationMs/elapsedMs 两个 long、playing 的 int bool。只检查保护是否就绪，不校验凭证；回复 int bool 表示接受异步仪表发布请求。缺少现有 bridge 源码时明确不可用，返回 0。
@@ -22,7 +22,7 @@ python3 vehicle-support/wecarflow/apply_guard.py \
 
 按用户要求，不校验调用包名、UID、签名或 owner 凭证。DiPlay 的反向媒体回调也不校验调用 UID。方案使用连接期间的内存保护开关，不生成调用方允许表。
 
-Binder 仅用于媒体回调及进程退出通知；当前回调进程退出、release 或服务销毁时解除保护，不自动恢复歌曲。更换回调时，内部代次过滤旧进程的死亡通知，避免旧通知关闭新连接的保护；这不是请求授权或 owner 校验。暂停屏障失败回复 0 并撤销保护。排队的暂停任务在超时/中断后取消并移除；执行前重新检查保护状态。已经进入播放器暂停方法的调用无法完全撤销。acquire 在客户端后台线程执行，每进程主线程暂停等待最多 5 秒。
+Binder 仅用于媒体回调及进程退出通知；当前回调进程退出、release 或服务销毁时解除保护，不自动恢复歌曲。更换回调时，内部代次过滤旧进程的死亡通知，避免旧通知关闭新连接的保护；这不是请求授权或 owner 校验。暂停检查失败只记录结果，保护开关保持开启。排队的暂停任务在超时/中断后取消并移除；执行前重新检查保护状态。已经进入播放器暂停方法的调用无法完全撤销。acquire 在客户端后台线程执行，每进程主线程暂停等待最多 5 秒。
 
 ## 进程与播放入口
 

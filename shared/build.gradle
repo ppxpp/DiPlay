@@ -41,6 +41,8 @@ android {
     }
 }
 dependencies {
+    // PAL client SDK uses Gson through its parent classloader.
+    implementation 'com.google.code.gson:gson:2.10.1'
     coreLibraryDesugaring libs.desugar.jdk.libs
     api libs.android.retrofuture
     implementation libs.androidx.app

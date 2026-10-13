@@ -27,7 +27,7 @@ internal object DiPlayVehicleIntegration {
                 MediaCommand.NEXT -> CarPlayMediaButton.NEXT
                 MediaCommand.PREVIOUS -> CarPlayMediaButton.PREVIOUS
             })
-        }, { message -> Log.i("DiPlay-Vehicle", message) })
+        }, { message -> Log.e("DiPlay-Vehicle", message) })
         runtime = extension
         next.vehicleSessionListener = extension?.let { selected ->
             { token, active ->

@@ -6,6 +6,7 @@ import android.os.Binder;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.RemoteException;
+import android.util.Log;
 
 /** Explicit bound service, raw Binder v1. No platform volume/source changes. */
 public final class PlaybackGuardService extends Service {
@@ -66,10 +67,15 @@ public final class PlaybackGuardService extends Service {
         GuardRuntime.mediaCallback = target;
         if (ready && GuardRuntime.guarded) return true;
         GuardRuntime.guarded = true;
+        // The connection gate must stay enabled even when an idle player cannot be paused.
+        // A pause failure is not permission for future PLAY/RESUME/NEXT calls.
+        ready = true;
         long identity = Binder.clearCallingIdentity();
-        try { ready = GuardRuntime.pauseAllProcesses(this); }
+        boolean paused;
+        try { paused = GuardRuntime.pauseAllProcesses(this); }
         finally { Binder.restoreCallingIdentity(identity); }
-        if (!ready || !target.isBinderAlive()) { clear(); return false; }
+        Log.e("CarPlayGuard", "Connection protection enabled existingPlayersPaused=" + paused);
+        if (!target.isBinderAlive()) { clear(); return false; }
         return true;
     }
     private void clear() {

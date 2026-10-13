@@ -32,6 +32,8 @@ internal object PalSteeringWheelInputAdapter : SteeringWheelInputSource {
         val context = appContext ?: return
         try {
             val loader = loadSdk(context)
+            // Fail here rather than crashing the SDK's asynchronous worker thread.
+            loader.loadClass("com.google.gson.Gson")
             val manager = loader.loadClass("com.tencent.tai.pal.client.PALServiceManager")
             val callbackType = loader.loadClass("com.tencent.tai.pal.client.PALServiceManager\$d")
             serviceCallback = proxy(loader, callbackType, "DiPlayPalService") { name, _ ->
@@ -61,7 +63,10 @@ internal object PalSteeringWheelInputAdapter : SteeringWheelInputSource {
         // Provision this asset locally; proprietary SDK bytes are not committed to the fork.
         val bytes = context.assets.open("vehicle/pal-client.dex").use { it.readBytes() }
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-        val directory = File(context.codeCacheDir, "vehicle-pal").apply { mkdirs() }
+        // Android 7 names optimized output after the input DEX. Sharing a directory
+        // makes the optimizer overwrite/delete its input (DexPathList then becomes empty).
+        val directory = File(context.filesDir, "vehicle-pal-sdk").apply { mkdirs() }
+        val optimized = File(context.codeCacheDir, "vehicle-pal-opt").apply { mkdirs() }
         val dex = File(directory, "pal-$digest.dex")
         if (!dex.exists()) {
             val temporary = File(directory, "pal.tmp")
@@ -69,7 +74,7 @@ internal object PalSteeringWheelInputAdapter : SteeringWheelInputSource {
             check(temporary.renameTo(dex)) { "PAL dex install failed" }
         }
         dex.setReadOnly()
-        return DexClassLoader(dex.absolutePath, directory.absolutePath, null, context.classLoader)
+        return DexClassLoader(dex.absolutePath, optimized.absolutePath, null, context.classLoader)
     }
 
     private fun register(loader: ClassLoader, managerClass: Class<*>) {
@@ -107,6 +112,7 @@ internal object PalSteeringWheelInputAdapter : SteeringWheelInputSource {
             val type = event.javaClass
             val key = type.getMethod("getKeyCode").invoke(event) as Int
             val action = type.getMethod("getAction").invoke(event) as Int
+            report("Vehicle: PAL key=$key action=$action")
             if (action != 1) return
             val command = when (key) { 8 -> MediaCommand.PREVIOUS; 9 -> MediaCommand.NEXT; else -> return }
             val signature = "$key:${type.getMethod("getSource").invoke(event)}:" +

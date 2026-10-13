@@ -19,6 +19,7 @@ internal class QQMusicPlaybackGuardClient(
     private val report: (String) -> Unit,
     private val onLost: () -> Unit,
     private val onCommand: (MediaCommand) -> Boolean,
+    private val onAvailable: () -> Unit,
 ) : LocalPlaybackGuardClient {
     private val context = context.applicationContext
     private val callback = object : Binder() {
@@ -46,6 +47,7 @@ internal class QQMusicPlaybackGuardClient(
             if (closed) return
             peer = service
             connected.countDown()
+            onAvailable()
         }
         override fun onServiceDisconnected(name: ComponentName) { peer = null; if (!closed) onLost() }
         override fun onBindingDied(name: ComponentName) { peer = null; if (!closed) onLost() }
@@ -62,7 +64,10 @@ internal class QQMusicPlaybackGuardClient(
                     return false
                 }
             }
-            if (!connected.await(1500, TimeUnit.MILLISECONDS) || closed) return false
+            if (!connected.await(1500, TimeUnit.MILLISECONDS) || closed) {
+                report("Vehicle: protection bind pending; will acquire when service connects")
+                return false
+            }
             val accepted = transact(1)
             report("Vehicle: native playback protection acknowledged=$accepted")
             return accepted

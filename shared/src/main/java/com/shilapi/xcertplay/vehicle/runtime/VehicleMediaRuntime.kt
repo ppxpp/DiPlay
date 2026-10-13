@@ -39,6 +39,16 @@ class VehicleMediaRuntime private constructor(
     private var fallbackResult: Boolean? = null
     @Volatile private var retriedGuard = false
 
+    init {
+        // Prepare the input SDK while connecting; commands still require a live session.
+        main.post {
+            if (!disposed) {
+                PalSteeringWheelInputAdapter.configure(this.context)
+                PalSteeringWheelInputAdapter.start({ command -> dispatchCommand(generation.get(), command) }, report)
+            }
+        }
+    }
+
     @Synchronized
     fun sessionChanged(token: Any, active: Boolean) {
         if (disposed || (!active && session !== token) || (active && session === token)) return
@@ -110,6 +120,20 @@ class VehicleMediaRuntime private constructor(
             }
         }, onCommand = { command ->
             generation.get() == revision && session != null && !disposed && sendCommand(command)
+        }, onAvailable = {
+            protectionWorker.execute {
+                if (generation.get() == revision && session != null && !disposed && !protected) {
+                    protected = guard?.acquire() == true
+                    if (generation.get() != revision || session == null || disposed) {
+                        protected = false
+                        guard?.close()
+                    } else {
+                        ready.countDown()
+                        refreshPublished(revision)
+                        report("Vehicle: connected-session protection confirmed=$protected")
+                    }
+                }
+            }
         })
 
     private fun dispatchCommand(revision: Long, command: MediaCommand) {
