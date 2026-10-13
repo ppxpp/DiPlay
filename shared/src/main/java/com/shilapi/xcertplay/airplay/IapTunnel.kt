@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicLong
 class IapTunnel(
     private val readKey: ByteArray,
     bindAddress: InetAddress = InetAddress.getByName("0.0.0.0"),
+    private val preferredPorts: IntArray? = null,
 ) : Closeable {
     interface Listener {
         fun onOpen(remoteAddress: String?) {}
@@ -77,11 +78,24 @@ class IapTunnel(
         return bound.localPort
     }
 
-    private fun bindAny(): ServerSocket =
-        ServerSocket().apply {
+    private fun bindAny(): ServerSocket {
+        if (preferredPorts != null) {
+            for (port in preferredPorts) {
+                try {
+                    return ServerSocket().apply {
+                        reuseAddress = true
+                        bind(InetSocketAddress(bindAddress, port))
+                    }
+                } catch (_: Exception) {
+                }
+            }
+            listener.onDebug("AirPlay iAP tunnel found no free firewall port; using an ephemeral port")
+        }
+        return ServerSocket().apply {
             reuseAddress = true
             bind(InetSocketAddress(bindAddress, 0))
         }
+    }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return

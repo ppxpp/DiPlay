@@ -5,7 +5,6 @@ import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
-import java.net.InetSocketAddress
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -30,6 +29,10 @@ class AudioStream(
     private val key: ByteArray,
     private val streamType: Int = -1,
     private val onDiagnostic: (String) -> Unit = {},
+    /** Firewall ports the RTP data socket should prefer; null keeps an ephemeral port. */
+    private val preferredDataPorts: IntArray? = null,
+    /** The control connection's local address; its family picks the data socket's wildcard. */
+    private val bindAddress: InetAddress? = null,
 ) : Closeable {
     interface Listener {
         fun onStarted(firstSample: Int) {}
@@ -53,7 +56,9 @@ class AudioStream(
     private var started = false
 
     fun listen(listener: Listener): Pair<Int, Int> {
-        val data = bindAnyPort()
+        // Only the RTP data port handles inbound media; the control port ignores its datagrams, so
+        // it stays ephemeral and never consumes a forwarded firewall port.
+        val data = CarFirewallPorts.udpSocket(bindAddress, preferredDataPorts)
         // Keep short Wi-Fi bursts in the kernel while decrypting or scheduling pauses
         // the receive thread. The platform may cap this request; log the actual size.
         val originalBufferBytes = runCatching { data.receiveBufferSize }.getOrDefault(0)
@@ -61,7 +66,7 @@ class AudioStream(
             runCatching { data.receiveBufferSize = AUDIO_RECEIVE_BUFFER_BYTES }
         }
         onDiagnostic("Audio UDP receive buffer type=$streamType original=$originalBufferBytes requested=$AUDIO_RECEIVE_BUFFER_BYTES actual=${runCatching { data.receiveBufferSize }.getOrDefault(0)}")
-        val control = bindAnyPort()
+        val control = CarFirewallPorts.udpSocket(null, null)
         dataSocket = data
         controlSocket = control
         dataThread = Thread({ runData(data, listener) }, "airplay-audio-rx").apply {
@@ -180,13 +185,6 @@ class AudioStream(
                 if (closed.get()) return
             }
         }
-    }
-
-    private fun bindAnyPort(): DatagramSocket {
-        val socket = DatagramSocket(null)
-        socket.reuseAddress = true
-        socket.bind(InetSocketAddress(InetAddress.getByName("::"), 0))
-        return socket
     }
 
     private fun readU32Be(source: ByteArray, offset: Int): Int =

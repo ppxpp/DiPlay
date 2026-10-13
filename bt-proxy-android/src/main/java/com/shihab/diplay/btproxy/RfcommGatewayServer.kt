@@ -12,11 +12,13 @@ import java.io.File
 import java.io.IOException
 import java.io.EOFException
 import java.net.Inet4Address
+import java.net.InetSocketAddress
 import java.net.NetworkInterface
+import java.net.DatagramPacket
+import java.net.DatagramSocket
 import java.net.ServerSocket
 import java.net.Socket
 import java.security.MessageDigest
-import java.security.SecureRandom
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -26,8 +28,11 @@ class RfcommGatewayServer(context: Context, private val directory: File, private
     private val nsd = context.getSystemService(Context.NSD_SERVICE) as NsdManager
     private var registration: NsdManager.RegistrationListener? = null
     @Volatile private var listener: ServerSocket? = null
+    @Volatile private var discoverySocket: DatagramSocket? = null
     @Volatile private var client: Socket? = null
     @Volatile private var bluetooth: BluetoothSocket? = null
+
+    val isRunning: Boolean get() = listener?.isClosed == false
 
     fun start(device: BluetoothDevice) {
         check(listener == null) { "Gateway already running" }
@@ -35,20 +40,26 @@ class RfcommGatewayServer(context: Context, private val directory: File, private
         require(mac.matches(Regex("(?i)[0-9a-f]{2}(:[0-9a-f]{2}){5}")) && mac != "02:00:00:00:00:00") {
             "Configure the real Android A Bluetooth address first"
         }
-        val tokenFile = File(directory, "gateway-token.txt")
-        if (!tokenFile.exists()) {
-            tokenFile.writeText(ByteArray(24).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it.toInt() and 255) })
-        }
-        val token = tokenFile.readText().trim()
-        val address = NetworkInterface.getNetworkInterfaces().toList()
-            .filter { it.isUp && it.name.startsWith("wlan") }
-            .flatMap { it.inetAddresses.toList() }
-            .filterIsInstance<Inet4Address>()
-            .firstOrNull { !it.isLoopbackAddress && it.isSiteLocalAddress }
-            ?: throw IOException("Connect Android A to Wi-Fi before starting the gateway")
-        val server = ServerSocket(39877, 1, address)
+        val token = Protocol.DEVELOPMENT_TOKEN
+        File(directory, "gateway-token.txt").writeText(token)
+        val interfaces = NetworkInterface.getNetworkInterfaces().toList()
+            .filter { it.isUp && !it.isLoopback }
+            .flatMap { networkInterface ->
+                networkInterface.inetAddresses.toList().filterIsInstance<Inet4Address>()
+                    .filter { !it.isLoopbackAddress && it.isSiteLocalAddress }
+                    .map { address -> networkInterface.name to address }
+            }
+        if (interfaces.isEmpty()) throw IOException("Connect Android A to Wi-Fi before starting the gateway")
+        val server = ServerSocket()
+        server.reuseAddress = true
+        server.bind(InetSocketAddress("0.0.0.0", 39877), 1)
         listener = server
-        log("phase=GATEWAY event=LISTENING bind=${address.hostAddress} port=39877 transport=wifi-tcp token=private")
+        log("phase=GATEWAY event=LISTENING bind=0.0.0.0 port=39877 transport=wifi-tcp token=private")
+        interfaces.forEach { (name, address) ->
+            log("phase=GATEWAY event=INTERFACE name=$name address=${address.hostAddress}")
+        }
+        runCatching { startUdpDiscovery(mac, server.localPort) }
+            .onFailure { log("phase=DISCOVERY event=UDP_START_FAILED error=${it.javaClass.simpleName}") }
         val advertisement = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(info: NsdServiceInfo) {
                 log("phase=DISCOVERY event=REGISTERED service=${info.serviceName}")
@@ -69,8 +80,7 @@ class RfcommGatewayServer(context: Context, private val directory: File, private
                 setAttribute("version", "1")
             }, NsdManager.PROTOCOL_DNS_SD, advertisement)
         } catch (error: Exception) {
-            close()
-            throw error
+            log("phase=DISCOVERY event=NSD_REGISTRATION_EXCEPTION error=${error.javaClass.simpleName}")
         }
         Thread({
             try {
@@ -90,6 +100,36 @@ class RfcommGatewayServer(context: Context, private val directory: File, private
                 if (listener === server) log("phase=GATEWAY result=ACCEPT_FAILED error=${error.javaClass.simpleName}")
             }
         }, "rfcomm-gateway").start()
+    }
+
+    private fun startUdpDiscovery(mac: String, tcpPort: Int) {
+        val socket = DatagramSocket(null).apply {
+            reuseAddress = true
+            bind(InetSocketAddress(Protocol.DISCOVERY_PORT))
+        }
+        discoverySocket = socket
+        Thread({
+            val buffer = ByteArray(256)
+            while (discoverySocket === socket && !socket.isClosed) {
+                try {
+                    val request = DatagramPacket(buffer, buffer.size)
+                    socket.receive(request)
+                    val requestedMac = Protocol.parseDiscoveryRequest(request.data, request.length) ?: continue
+                    if (requestedMac != "*" && !requestedMac.equals(mac, ignoreCase = true)) continue
+                    DatagramSocket().use { replySocket ->
+                        replySocket.connect(request.address, request.port)
+                        val response = Protocol.discoveryResponse(mac, tcpPort)
+                        replySocket.send(DatagramPacket(response, response.size, request.address, request.port))
+                    }
+                    log("phase=DISCOVERY event=UDP_REPLY peer=${request.address.hostAddress}")
+                } catch (error: Exception) {
+                    if (discoverySocket === socket && !socket.isClosed) {
+                        log("phase=DISCOVERY event=UDP_ERROR error=${error.javaClass.simpleName}")
+                    }
+                }
+            }
+        }, "gateway-udp-discovery").start()
+        log("phase=DISCOVERY event=UDP_LISTENING port=${Protocol.DISCOVERY_PORT}")
     }
 
     private fun relay(socket: Socket, device: BluetoothDevice, token: String, mac: String) {
@@ -169,6 +209,8 @@ class RfcommGatewayServer(context: Context, private val directory: File, private
         if (advertisement != null) runCatching { nsd.unregisterService(advertisement) }
         val server = listener; listener = null
         runCatching { server?.close() }
+        val discovery = discoverySocket; discoverySocket = null
+        runCatching { discovery?.close() }
         runCatching { client?.close() }
         runCatching { bluetooth?.close() }
         log("phase=GATEWAY event=STOPPED")

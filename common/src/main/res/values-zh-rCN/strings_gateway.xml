@@ -1,0 +1,23 @@
+<resources>
+    <string name="gateway_title">代理设备 · 查找与连接</string>
+    <string name="gateway_description">代理设备通过蓝牙连接 iPhone，DiPlay 在当前 Wi-Fi 中自动寻找代理设备，无需填写 IP 地址或配对码。</string>
+    <string name="gateway_search">重新查找代理设备</string>
+    <string name="gateway_connect">通过代理设备连接 CarPlay</string>
+    <string name="gateway_forget">重新选择代理设备</string>
+    <string name="gateway_forget_confirm">清除已选择的代理设备并重新查找？</string>
+    <string name="gateway_searching">正在查找代理设备…</string>
+    <string name="gateway_found_unpaired">已发现 A · %1$s\n尚未配对，首次输入 A 的配对信息后会自动保存。</string>
+    <string name="gateway_found_paired">已发现代理设备 · %1$s\n点击下方按钮连接 CarPlay。</string>
+    <string name="gateway_not_found">未找到代理设备。请确认代理已运行、两端在同一局域网，再重新查找。</string>
+    <string name="gateway_pair">与此 A 配对</string>
+    <string name="gateway_pairing_input">配对信息或配对码</string>
+    <string name="gateway_pairing_help">在 A 上点击“配对信息”，在此输入其中的配对码，或粘贴完整配对信息。首次配对后自动保存。</string>
+    <string name="gateway_save_pairing">验证并保存</string>
+    <string name="gateway_invalid_pairing">配对信息无效或不是当前 A 的配对信息</string>
+    <string name="gateway_pairing_rejected">配对失败，请检查配对信息并确认 A 当前可用。</string>
+    <string name="gateway_wifi_required">请先在 DiPlay 连接设置中保存当前 Wi-Fi 的名称和密码。</string>
+    <string name="gateway_ready">已选择代理设备 · 可以连接</string>
+    <string name="gateway_check_connection">检查代理连接</string>
+    <string name="gateway_direct_connected">代理已连通 · %1$s:%2$d\nTCP 连接、授权和身份校验通过。点击下方按钮连接 CarPlay。</string>
+    <string name="gateway_direct_failed">代理连接失败 · %1$s:%2$d\n%3$s</string>
+</resources>

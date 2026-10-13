@@ -1,7 +1,7 @@
 package com.shilapi.xcertplay.media
 
 import com.shilapi.xcertplay.hud.BydAmbientLightPolicy
-import java.util.concurrent.CompletableFuture
+import java9.util.concurrent.CompletableFuture
 import org.junit.Assert.*
 import org.junit.Test
 

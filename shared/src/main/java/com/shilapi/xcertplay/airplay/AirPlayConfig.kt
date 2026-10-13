@@ -69,7 +69,9 @@ data class AirPlayConfig(
     val main: AirPlayDisplayConfig,
     val cluster: AirPlayDisplayConfig? = null,
     val rightHandDrive: Boolean = false,
-    val port: Int = 7000,
+    // Pioneer head unit firewall (carnetserver) only lets inbound new TCP reach 9911/9912/5656/8721;
+    // 5656 is already held by the car, so advertise the bound port from the 8721 side instead of 7000.
+    val port: Int = 8721,
     val entertainmentSampleRate: Int = 48000,
     val hevc: Boolean = false,
     val disableAudioOutput: Boolean = false,
@@ -96,6 +98,13 @@ data class AirPlayConfig(
      * default stream (#148, #341). When set, 8 and 16 kHz are not offered for default and alert audio.
      */
     val speechWithout8And16Khz: Boolean = false,
+    /**
+     * The Pioneer head unit's carnetserver firewall only forwards inbound new connections to a fixed
+     * port list, so the wireless path pins every iPhone-initiated CarPlay connection (event channel,
+     * screen streams, iAP tunnel, audio RTP) to a forwarded port. Off for wired/USB where no such
+     * firewall exists.
+     */
+    val pinInboundPorts: Boolean = false,
 )
 
 /** The offer, SETUP and controls must all honor the user's audio-output setting. */

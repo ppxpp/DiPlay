@@ -43,11 +43,17 @@ internal class AudioFocusCoordinator(
     private val enabled: Boolean,
     private val muteMediaOnTransientLoss: Boolean = true,
     private val report: (String) -> Unit = {},
+    private val pioneerRouting: Boolean = PioneerAudioRouting.available,
 ) {
     private data class Entry(val channel: AudioChannel, val attributes: AudioAttributes, var appliedVolume: Float = FULL_VOLUME)
 
     private val manager = context?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+    private val appContext = context?.applicationContext
     private val active = LinkedHashMap<AudioTrack, Entry>()
+    // Pioneer has independent source and mix managers. Abandoning media to request guidance
+    // switches the source OFF; a mix lease must coexist with the media lease.
+    private val pioneerSpeechTracks = LinkedHashSet<AudioTrack>()
+    private var pioneerSpeechRequest: AudioFocusRequestCompat? = null
     private var request: AudioFocusRequestCompat? = null
     private var requestedChannel: AudioChannel? = null
     private var mediaVolume = FULL_VOLUME
@@ -89,14 +95,44 @@ internal class AudioFocusCoordinator(
 
     @Synchronized
     fun acquire(track: AudioTrack, channel: AudioChannel, attributes: AudioAttributes) {
-        if (closed || !enabled || manager == null || channel == AudioChannel.NAVIGATION) return
+        val pioneerStream = pioneerStream(attributes)
+        if (closed || (!enabled && pioneerStream == null) || manager == null ||
+            (channel == AudioChannel.NAVIGATION && pioneerStream == null)) return
+        if (pioneerStream == 400) {
+            pioneerSpeechTracks.add(track)
+            if (pioneerSpeechRequest == null) {
+                val speechListener = AudioManager.OnAudioFocusChangeListener { change ->
+                    report("Audio: Pioneer speech focus change=$change")
+                }
+                val next = AudioFocusRequestCompat(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+                    attributes, speechListener, Handler(Looper.getMainLooper()), 400)
+                pioneerSpeechRequest = next
+                val result = next.request(manager)
+                report("Audio: Pioneer speech focus requested streamType=400 granted=$result")
+            }
+            return
+        }
+        if (channel == AudioChannel.MEDIA && pioneerStream != null) {
+            PioneerAudioRouting.selectMediaSource(report)
+        }
         active[track] = Entry(channel, attributes)
         refreshRequest()
         applyMediaVolume(track, active.getValue(track))
+        if (channel == AudioChannel.MEDIA && pioneerStream != null) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                synchronized(this) {
+                    if (!closed && active.containsKey(track)) PioneerAudioRouting.pauseSourcePlayer(appContext, report)
+                }
+            }, 500)
+        }
     }
 
     @Synchronized
     fun release(track: AudioTrack) {
+        if (pioneerSpeechTracks.remove(track) && pioneerSpeechTracks.isEmpty()) {
+            manager?.let { pioneerSpeechRequest?.abandon(it) }
+            pioneerSpeechRequest = null
+        }
         if (active.remove(track) != null) refreshRequest()
     }
 
@@ -109,6 +145,9 @@ internal class AudioFocusCoordinator(
     fun close() {
         if (closed) return
         closed = true
+        pioneerSpeechTracks.clear()
+        manager?.let { pioneerSpeechRequest?.abandon(it) }
+        pioneerSpeechRequest = null
         active.clear()
         refreshRequest()
     }
@@ -134,12 +173,13 @@ internal class AudioFocusCoordinator(
             AudioChannel.NAVIGATION -> return
         }
         currentListener = listenerFor(focusGeneration)
-        val next = AudioFocusRequestCompat(gain, primary.attributes, currentListener, Handler(Looper.getMainLooper()))
+        val pioneerStream = pioneerStream(primary.attributes)
+        val next = AudioFocusRequestCompat(gain, primary.attributes, currentListener, Handler(Looper.getMainLooper()), pioneerStream)
         request = next
         requestedChannel = primary.channel
         val result = manager?.let(next::request)
         if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) setMediaVolume(FULL_VOLUME)
-        val line = "Audio: focus requested channel=${primary.channel} gain=$gain granted=$result activeTracks=${active.size}"
+        val line = "Audio: focus requested channel=${primary.channel} gain=$gain granted=$result activeTracks=${active.size} streamType=${pioneerStream ?: "usage"}"
         Log.i(TAG, line)
         runCatching { report(line) }
     }
@@ -148,6 +188,9 @@ internal class AudioFocusCoordinator(
         mediaVolume = volume
         active.forEach { (track, entry) -> applyMediaVolume(track, entry) }
     }
+
+    private fun pioneerStream(attributes: AudioAttributes): Int? =
+        attributes.contentType.takeIf { pioneerRouting && it in 400..401 }
 
     private fun applyMediaVolume(track: AudioTrack, entry: Entry) {
         // Telephony and assistant speech remain audible, and navigation never enters this map.
@@ -245,7 +288,7 @@ class AndroidMediaSink(
     private val videoReleasedListeners = ArrayList<() -> Unit>()
     // Closed decoders whose workers may still hold a codec on a surface until they exit; a surface
     // detach also waits for them.
-    private val closingVideoDecoders = ConcurrentHashMap.newKeySet<VideoDecoder>()
+    private val closingVideoDecoders: MutableSet<VideoDecoder> = ConcurrentHashMap.newKeySet<VideoDecoder>()
     // How long a surface detach waits for decoders to confirm, and then for an unconfirmed one to exit
     // after it is closed. Variables so tests can shorten them.
     internal var detachTimeoutNanos = 2_000_000_000L
@@ -1977,16 +2020,17 @@ private class AudioRenderer(
 
     /** 0 uses usage-based routing; 1–20 attempt legacy stream types supported by the head unit. */
     private fun channelOverride(channel: AudioChannel): Int = when (channel) {
-        AudioChannel.MEDIA -> mediaChannel
-        AudioChannel.NAVIGATION -> navigationChannel
-        else -> 0
+        AudioChannel.MEDIA -> mediaChannel.takeIf { it != 0 } ?: PioneerAudioRouting.streamType(channel) ?: 0
+        AudioChannel.NAVIGATION -> navigationChannel.takeIf { it != 0 } ?: PioneerAudioRouting.streamType(channel) ?: 0
+        else -> PioneerAudioRouting.streamType(channel) ?: 0
     }
 
     private fun audioAttributesFor(
         selection: AudioChannelSelection,
         streamOverride: Int,
     ): AudioAttributes {
-        if (streamOverride in AudioManager.STREAM_SYSTEM..AudioManager.STREAM_ACCESSIBILITY) {
+        if (streamOverride in AudioManager.STREAM_SYSTEM..AudioManager.STREAM_ACCESSIBILITY ||
+            (PioneerAudioRouting.available && streamOverride in 400..401)) {
             // Android accepts only its defined legacy stream IDs here. BYD audio policy can
             // map these standard streams to vehicle outputs; arbitrary channel numbers are
             // not valid AudioAttributes legacy stream types.
@@ -2029,7 +2073,7 @@ private class AudioRenderer(
     private fun requestAudioFocus() {
         val channel = mappedChannel ?: return
         val attributes = trackAttributes ?: return
-        if (channel == AudioChannel.NAVIGATION) {
+        if (channel == AudioChannel.NAVIGATION && PioneerAudioRouting.focusStream(attributes) == null) {
             Log.i(TAG, "audio focus skipped channel=NAVIGATION; overlays without ducking")
             return
         }
@@ -2269,6 +2313,7 @@ private class AudioRenderer(
             fadeApplied = true
         }
         var written = 0
+        var stalledSinceNs = 0L
         while (written < length && running) {
             val writeLength = if (playbackStarted) {
                 length - written
@@ -2277,7 +2322,10 @@ private class AudioRenderer(
             }
             val writeStarted = System.nanoTime()
             diagnosticStage = "track-write"
-            val count = track.write(data, offset + written, writeLength, AudioTrack.WRITE_BLOCKING)
+            // Pioneer parks inactive source buses in the HAL. A blocking write then prevents
+            // teardown and leaks a renderer on every reconnect/source change.
+            val count = track.write(data, offset + written, writeLength,
+                if (PioneerAudioRouting.available) AudioTrack.WRITE_NON_BLOCKING else AudioTrack.WRITE_BLOCKING)
             maxWriteMs = maxOf(maxWriteMs, (System.nanoTime() - writeStarted) / 1_000_000L)
             if (count < 0) {
                 writeErrorsThisWindow++
@@ -2286,8 +2334,16 @@ private class AudioRenderer(
             }
             if (count == 0) {
                 zeroWritesThisWindow++
+                if (PioneerAudioRouting.available) {
+                    if (stalledSinceNs == 0L) stalledSinceNs = System.nanoTime()
+                    if (System.nanoTime() - stalledSinceNs < 250_000_000L) {
+                        Thread.sleep(5)
+                        continue
+                    }
+                }
                 break
             }
+            stalledSinceNs = 0L
             if (count < writeLength) partialWritesThisWindow++
             val framesWritten = count / frameBytes
             if (ambientMedia && AmbientMusicController.wantsPcm(ambientRendererToken)) {
@@ -2321,7 +2377,7 @@ private class AudioRenderer(
 
     private fun startPlayback(track: AudioTrack) {
         diagnosticStage = "track-play"
-        underrunsAtPlaybackStart = track.underrunCount
+        underrunsAtPlaybackStart = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) track.underrunCount else 0
         track.play()
         playbackStarted = true
         reportNavigationPlayback(track)
@@ -2342,7 +2398,7 @@ private class AudioRenderer(
     private fun maintainPlaybackBuffer() {
         val track = track ?: return
         if (bufferProgress.shouldRebuffer(mappedChannel == AudioChannel.MEDIA, playbackStarted,
-                track.underrunCount > underrunsAtPlaybackStart, queue.isEmpty(), track.playbackHeadPosition,
+                (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) track.underrunCount else 0) > underrunsAtPlaybackStart, queue.isEmpty(), track.playbackHeadPosition,
                 startThresholdBytes / 2L)) {
             // The hardware buffer has starved below the recovery floor. Pause without flushing
             // or discarding PCM, then use the configured start threshold again when music resumes.
@@ -2367,7 +2423,7 @@ private class AudioRenderer(
         val now = System.nanoTime()
         if (statsWindowStartNs == 0L) statsWindowStartNs = now
         if (!force && now - statsWindowStartNs < STATS_WINDOW_NS) return
-        val underruns = track?.underrunCount ?: 0
+        val underruns = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) track?.underrunCount ?: 0 else 0
         val lastRx = lastArrivalNs.get()
         val currentTrack = track
         val playbackHeadFrames = currentTrack?.playbackHeadPosition

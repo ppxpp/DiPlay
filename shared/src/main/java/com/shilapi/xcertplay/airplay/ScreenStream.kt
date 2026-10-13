@@ -2,6 +2,7 @@ package com.shilapi.xcertplay.airplay
 
 import android.util.Log
 import java.io.Closeable
+import java.io.IOException
 import java.io.InputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -50,6 +51,29 @@ class ScreenStream(private val key: ByteArray, private val onDiagnostic: (String
         return bound.localPort
     }
 
+    /**
+     * Pinned-firewall mode: takes this stream's socket from the session's shared firewall port
+     * instead of opening a listener. [ticket] keeps the claim order the SETUPs established.
+     */
+    fun listenOnMuxed(session: AirPlaySession, ticket: Int, listener: Listener) {
+        this.listener = listener
+        thread = Thread({
+            val connection = session.claimMuxedScreenConnection(ticket, MUX_SCREEN_CLAIM_TIMEOUT_MILLIS)
+            if (connection == null) {
+                if (!closed.get()) {
+                    listener.onClosed(IOException("screen stream was not offered a muxed connection"))
+                }
+                return@Thread
+            }
+            if (closed.get()) {
+                safeClose(connection.socket)
+                return@Thread
+            }
+            socket = connection.socket
+            run(connection.socket, connection.input)
+        }, "airplay-screen").apply { isDaemon = true; start() }
+    }
+
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         safeClose(socket)
@@ -67,11 +91,11 @@ class ScreenStream(private val key: ByteArray, private val onDiagnostic: (String
         }
     }
 
-    private fun run(sock: Socket) {
+    private fun run(sock: Socket, inputOverride: InputStream? = null) {
         var failure: Throwable? = null
         val stats = StreamReceiveStats("video", onDiagnostic)
         try {
-            val input = sock.getInputStream()
+            val input = inputOverride ?: sock.getInputStream()
             while (!closed.get()) {
                 stats.reading()
                 val header = readFully(input, HEADER_LEN) ?: break
@@ -143,6 +167,7 @@ class ScreenStream(private val key: ByteArray, private val onDiagnostic: (String
         const val OP_VIDEO_FRAME = 0
         const val OP_VIDEO_CONFIG = 1
         const val MAX_BODY = 8 * 1024 * 1024
+        const val MUX_SCREEN_CLAIM_TIMEOUT_MILLIS = 15_000L
     }
 }
 

@@ -17,6 +17,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
 import org.robolectric.annotation.RealObject
+import org.robolectric.util.ReflectionHelpers
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [25, 28, 33], manifest = Config.NONE, shadows = [AudioFocusAutoYieldTest.VolumeTrackingAudioTrack::class])
@@ -54,6 +55,34 @@ class AudioFocusAutoYieldTest {
         assertTrue(volumes(assistant).isEmpty())
         assertTrue(volumes(navigation).isEmpty())
         assertEquals(userVolume, manager.getStreamVolume(AudioManager.STREAM_MUSIC))
+    }
+
+    @Config(sdk = [25])
+    @Test fun pioneerGuidanceKeepsTheMediaSourceFocusUntilMediaStops() {
+        val coordinator = AudioFocusCoordinator(context, false, pioneerRouting = true)
+            .also(coordinators::add)
+        val media = track(); val navigation = track(); val assistant = track()
+        val mediaAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build()
+        val speechAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE).build()
+        ReflectionHelpers.setField(mediaAttributes, "mContentType", 401)
+        ReflectionHelpers.setField(speechAttributes, "mContentType", 400)
+
+        coordinator.acquire(media, AudioChannel.MEDIA, mediaAttributes)
+        val mediaFocus = shadowOf(manager).lastAudioFocusRequest
+        assertEquals(401, mediaFocus.streamType)
+        coordinator.acquire(navigation, AudioChannel.NAVIGATION, speechAttributes)
+        val speechFocus = shadowOf(manager).lastAudioFocusRequest
+        assertEquals(400, speechFocus.streamType)
+        assertNull(shadowOf(manager).lastAbandonedAudioFocusListener)
+
+        coordinator.acquire(assistant, AudioChannel.ASSISTANT, speechAttributes)
+        coordinator.release(navigation)
+        assertNull(shadowOf(manager).lastAbandonedAudioFocusListener)
+        coordinator.release(assistant)
+        assertSame(speechFocus.listener, shadowOf(manager).lastAbandonedAudioFocusListener)
+        assertSame(speechFocus, shadowOf(manager).lastAudioFocusRequest)
+        coordinator.release(media)
+        assertSame(mediaFocus.listener, shadowOf(manager).lastAbandonedAudioFocusListener)
     }
 
     @Test fun newMediaTrackInheritsLossWhilePhoneTrackRemainsAudible() {

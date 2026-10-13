@@ -13,11 +13,14 @@
 
 - 以 Android 手机 PoC 技术方案 为技术背景，先验证 Android A 与 iPhone 的真实 RFCOMM 链路，再推进 TCP 透传和 DiPlay 接入。
 - Android A 负责蓝牙连接及原始字节透传；Android B 保留 DiPlay 的 iAP2、配件认证、AirPlay/CarPlay、音视频与触控处理，并复用 Existing Wi-Fi / Same LAN 模式。
-- 当前设备分工（2026-10-11 更新）：Nexus 5（Android 6.0.1，ADB `08b4e9a20de78f14`）作为 Android A；小米 13（Android 15，ADB `e090fd5c`）作为 Android B。不再使用模拟器。早期“小米作为 A”的验证记录仅代表当时设备分工。
+- 当前设备分工（2026-10-12 更新）：小米 13（Android 15，ADB `e090fd5c`）作为 Android A；Nexus 5（Android 6.0.1，ADB `08b4e9a20de78f14`）作为 Android B。不再使用模拟器。早期设备角色记录仅代表当时分工。
 - 按配对、SDP/RFCOMM、TCP 隧道、iAP2、认证、Wi-Fi、AirPlay、完整 CarPlay 分阶段记录证据；关键前置验证失败时先定位原因，避免盲目开发后续功能。
 
 ## 后续无屏 Android A 替代硬件要求
 
+- 最终 A 的长度和宽度均不得超过 20 mm；厚度、尺寸是否包含外壳及天线尚待确认。开发验证板不受该尺寸限制，最终选型必须评估 PCB、供电、天线与结构空间，不能将开发板或双模组原型视为已满足尺寸要求。
+
+- A 必须支持 5 GHz Wi-Fi；仅支持 2.4 GHz 的单经典 ESP32 或原生树莓派 Zero 2 W 不符合最终硬件要求。经典 ESP32 可作为蓝牙独立实验板，不能作为完整 A 的最终选型。
 - A 后续可替换为无屏硬件（例如经典 ESP32 与 ESP32-C5 组合），正常使用只需供电，不依赖 A 上的屏幕、前台页面或电脑 USB。
 - B 的 DiPlay 原生“A 设备管理”页面是主要管理入口，展示 A 的运行、网络、B/iPhone 连接、透传状态、日志和软件升级。A 提供平台无关的管理接口；iPhone 辅助管理范围另行确认，不默认强制实现完整网页管理界面。连接状态与 B 上的 CarPlay 会话状态须区分。
 - 首次配网、A/B 配对、启动/停止及重连操作通过手机完成；自动发现不能依赖预置对端 IP，管理页面不能依赖手工读取设备 IP。

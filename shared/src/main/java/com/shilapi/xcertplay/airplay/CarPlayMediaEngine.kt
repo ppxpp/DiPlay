@@ -137,20 +137,27 @@ class CarPlayMediaEngine(
                 session.logDebug("Video recovery: requested keyframe sent=$sent")
             }
         }
-        val port = screen.listen(
-            object : ScreenStream.Listener by currentScreenListener(type, sink, isCurrent = { streams[streamKey] === screen }) {
-                override fun onClosed(cause: Throwable?) {
-                    Log.w(
-                        TAG,
-                        "screen stream ended type=$type reason=${cause?.message ?: "peer EOF"}",
-                    )
-                    if (streams.remove(streamKey, screen)) {
-                        sink.onScreenStreamActive(type, false)
-                    }
-                    session.close()
+        val listener = object : ScreenStream.Listener by currentScreenListener(type, sink, isCurrent = { streams[streamKey] === screen }) {
+            override fun onClosed(cause: Throwable?) {
+                Log.w(
+                    TAG,
+                    "screen stream ended type=$type reason=${cause?.message ?: "peer EOF"}",
+                )
+                if (streams.remove(streamKey, screen)) {
+                    sink.onScreenStreamActive(type, false)
                 }
-            },
-        )
+                session.close()
+            }
+        }
+        // On a firewall-pinned session the screen sockets arrive on the shared event port instead.
+        val muxedPort = if (session.pinsInboundPorts) session.muxedScreenPort() else null
+        val port = if (muxedPort != null) {
+            session.logDebug("airplay screen stream type=$type uses pinned port=$muxedPort")
+            screen.listenOnMuxed(session, session.nextMuxScreenTicket(), listener)
+            muxedPort
+        } else {
+            screen.listen(listener)
+        }
         streams.put(streamKey, screen)?.close()
         sink.onScreenStreamActive(type, true)
         return port
@@ -197,7 +204,13 @@ class CarPlayMediaEngine(
         val capture = audioCaptureDirectory?.let { AudioPacketCapture(it, type) }
         if (capture != null) audioCaptures[streamKey] = capture
         val clockProbe = RtpClockProbe()
-        val audio = AudioStream(key, type, session::logDebug)
+        val audio = AudioStream(
+            key,
+            type,
+            session::logDebug,
+            session.firewallAudioUdpPorts(),
+            session.firewallBindAddress(),
+        )
         val (dataPort, controlPort) = audio.listen(
             object : AudioStream.Listener {
                 override fun onStarted(firstSample: Int) {
@@ -363,6 +376,7 @@ class CarPlayMediaEngine(
                     is Inet4Address -> InetAddress.getByName("0.0.0.0")
                     else -> InetAddress.getByName("0.0.0.0")
                 },
+            preferredPorts = session.firewallTcpPorts(),
         )
         val bridge = AirPlayIapTunnelStream(session, tunnel)
         val handler = iapTunnelHandler

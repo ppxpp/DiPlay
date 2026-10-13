@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Apple: 枚举全部 Apple 设备（与 DiPlay IphoneUsbMatcher.appleVendor 一致）。 -->
+    <usb-device vendor-id="1452" />
+</resources>

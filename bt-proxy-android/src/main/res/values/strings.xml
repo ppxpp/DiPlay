@@ -2,10 +2,11 @@
     <string name="app_name">DiPlay Bluetooth Proxy</string>
     <string name="title">Android A · 蓝牙代理 PoC</string>
     <string name="description">本应用用于 Android A 的蓝牙连接与字节透传验证。请先在系统设置中将本机与 iPhone 配对。</string>
-    <string name="scope">选择已配对的 iPhone，查询 SDP 后尝试 RFCOMM。连接最多等待 15 秒，成功后只接收观察 10 秒；不发送测试数据。另可验证 iAP2 双向握手，此模式发送真实协议报文，最多等待 20 秒。认证及完整 CarPlay 尚未验证。</string>
+    <string name="scope">授权蓝牙并配对 iPhone 后，代理会自动启动。B 在同一局域网查找 A 并发起连接；当前开发版使用固定连接码 123456，DiPlay 发现代理后直接连接。代理通过前台服务持续运行，退出本页面不会停止；手动停止后可点击启动恢复。iAP2、认证及 CarPlay 音视频由 B 处理。</string>
     <string name="query_sdp">查询 SDP 服务</string>
     <string name="connect_rfcomm">验证 RFCOMM 连接</string>
     <string name="handshake_iap2">验证 iAP2 双向握手</string>
+    <string name="gateway_pairing_information">配对信息</string>
     <string name="start_gateway">启动 Wi-Fi 蓝牙透传代理</string>
     <string name="stop_gateway">停止蓝牙透传代理</string>
     <string name="disconnect">断开连接</string>

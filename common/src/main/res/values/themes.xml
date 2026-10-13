@@ -13,7 +13,6 @@
     <style name="Theme.Xcertplay.Light">
         <item name="android:colorAccent">#245A9C</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
         <item name="android:navigationBarColor">#E9EEF6</item>
         <item name="android:statusBarColor">#E9EEF6</item>
         <item name="android:windowBackground">#E9EEF6</item>

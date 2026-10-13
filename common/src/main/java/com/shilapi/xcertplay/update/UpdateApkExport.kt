@@ -42,6 +42,7 @@ internal object UpdateApkExport {
         return apk.copyTo(File(directory, apk.name), overwrite = true)
     }
 
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
     private fun copyToDownloads(resolver: ContentResolver, apk: File): Saved {
         // Only entries created by this app are visible to these queries, so other apps' files are safe.
         resolver.delete(

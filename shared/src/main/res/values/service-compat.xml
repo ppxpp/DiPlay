@@ -1,0 +1,3 @@
+<resources>
+    <bool name="phone_audio_service_supported">false</bool>
+</resources>

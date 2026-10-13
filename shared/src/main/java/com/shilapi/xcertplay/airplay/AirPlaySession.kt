@@ -6,6 +6,7 @@ import com.shilapi.xcertplay.transport.BlockingDuplexByteStream
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.Closeable
+import java.io.InputStream
 import java.math.BigInteger
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -14,6 +15,8 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 data class AirPlayDeviceInfo(
@@ -97,11 +100,22 @@ class AirPlaySession(
     private var pendingNightMode: Boolean? = null
     private val firstTouchSendLogged = AtomicBoolean(false)
     private val touchSendFailureLogged = AtomicBoolean(false)
-    private val ntp = NtpClock()
+    private val ntp = NtpClock(
+        if (config.pinInboundPorts) CarFirewallPorts.TIMING_UDP else null,
+        if (config.pinInboundPorts) socket.localAddress else null,
+    )
     private var keepAliveSocket: DatagramSocket? = null
     private var keepAliveThread: Thread? = null
     private val eventWriteLock = Any()
     private val eventThreads = CopyOnWriteArrayList<Thread>()
+
+    // Pinned-firewall mux: the shared listener accepts the event channel first (the iPhone only
+    // sends the stream SETUPs once the event channel is up), then the screen stream connections.
+    private var muxedEventRoleTaken = false // only touched by the mux accept thread
+    private val muxedScreenConnections = LinkedBlockingQueue<MuxedConnection>(MUX_SCREEN_QUEUE_CAPACITY)
+    private val muxedScreenLock = Object()
+    private var muxedScreenTickets = 0
+    private var muxedScreenTurns = 0
 
     val host: String = socket.inetAddress?.hostAddress ?: ""
     val localAddress: InetAddress? = socket.localAddress
@@ -121,6 +135,23 @@ class AirPlaySession(
     }
 
     fun syncedNtp(): BigInteger = ntp.syncedNtp()
+
+    /** True when every iPhone-initiated connection must bind to a forwarded firewall port. */
+    internal val pinsInboundPorts: Boolean get() = config.pinInboundPorts
+
+    internal fun firewallTcpPorts(): IntArray? = if (config.pinInboundPorts) CarFirewallPorts.TCP else null
+
+    internal fun firewallAudioUdpPorts(): IntArray? = if (config.pinInboundPorts) CarFirewallPorts.AUDIO_UDP else null
+
+    /** The control connection's local address when inbound ports are pinned; null otherwise. */
+    internal fun firewallBindAddress(): InetAddress? =
+        if (config.pinInboundPorts) socket.localAddress else null
+
+    /** The firewall port the event channel and screen streams share, or null before the first SETUP. */
+    internal fun muxedScreenPort(): Int? = eventServer?.takeIf { !it.isClosed }?.localPort
+
+    /** Reserves this screen stream's claim order; connections are handed out in ticket order. */
+    internal fun nextMuxScreenTicket(): Int = synchronized(muxedScreenLock) { muxedScreenTickets++ }
 
     internal fun logDebug(message: String) = debugLog(message)
 
@@ -810,10 +841,119 @@ class AirPlaySession(
     }
 
     private fun openEvent(): Int {
+        if (config.pinInboundPorts) {
+            // One listener serves the event channel and every screen stream for the whole session.
+            // Repeated SETUPs reuse it so the advertised port never moves.
+            eventServer?.takeIf { !it.isClosed }?.let { return it.localPort }
+            val server = CarFirewallPorts.tcpListener(localAddress, CarFirewallPorts.TCP) { debugLog(it) }
+            eventServer = server
+            spawnEvent("airplay-event-accept") { acceptEventConnections(server) }
+            return server.localPort
+        }
         val server = ServerSocket(0, 50, InetAddress.getByName("::"))
         eventServer = server
         spawnEvent("airplay-event-accept") { acceptEvent(server) }
         return server.localPort
+    }
+
+    /** Mux accept loop for the pinned port: the first connection is the event channel, later ones are screens. */
+    private fun acceptEventConnections(server: ServerSocket) {
+        try {
+            while (!closed.get()) {
+                val accepted = server.accept()
+                accepted.tcpNoDelay = true
+                // Single accept thread: acceptance order is the connection order, so the first
+                // arrival is the event channel and later sockets queue in their SETUP order.
+                val isEvent = !muxedEventRoleTaken
+                if (isEvent) {
+                    muxedEventRoleTaken = true
+                    spawnEvent("airplay-event-channel") { runEventChannel(accepted) }
+                } else {
+                    enqueueMuxedScreenConnection(accepted)
+                }
+            }
+        } catch (error: Exception) {
+            if (!closed.get()) {
+                Log.e(TAG, "airplay event accept failed", error)
+                close()
+            }
+        }
+    }
+
+    /**
+     * Queues a screen connection for the next waiting stream claim. The queue keeps the acceptance
+     * order (the iPhone's SETUP order); a socket may stay silent until the phone pushes video.
+     */
+    private fun enqueueMuxedScreenConnection(socket: Socket) {
+        val queued = try {
+            muxedScreenConnections.offer(
+                MuxedConnection(socket, socket.getInputStream()),
+                MUX_ADMIT_QUEUE_WAIT_MILLIS,
+                TimeUnit.MILLISECONDS,
+            )
+        } catch (error: Exception) {
+            if (!closed.get()) Log.w(TAG, "airplay muxed screen enqueue failed", error)
+            false
+        }
+        if (!queued) {
+            debugLog("airplay screen connection had no waiting stream; closed")
+            safeClose(socket)
+            return
+        }
+        debugLog("airplay screen connection admitted from ${socket.remoteSocketAddress}")
+        synchronized(muxedScreenLock) { muxedScreenLock.notifyAll() }
+    }
+
+    /**
+     * Hands the screen stream holding [ticket] the connection at that position. Claims complete in
+     * ticket order so the main and cluster streams keep the sockets their SETUP order assigned.
+     */
+    internal fun claimMuxedScreenConnection(ticket: Int, timeoutMillis: Long): MuxedConnection? {
+        val deadlineNanos = System.nanoTime() + timeoutMillis * NANOS_PER_MILLISECOND
+        return try {
+            claimMuxedScreenConnectionLocked(ticket, deadlineNanos)
+        } catch (_: InterruptedException) {
+            debugLog("airplay screen stream ticket=$ticket claim interrupted")
+            null
+        }
+    }
+
+    private fun claimMuxedScreenConnectionLocked(ticket: Int, deadlineNanos: Long): MuxedConnection? {
+        synchronized(muxedScreenLock) {
+            try {
+                while (muxedScreenTurns < ticket && !closed.get()) {
+                    val remainingNanos = deadlineNanos - System.nanoTime()
+                    if (remainingNanos <= 0) break
+                    muxedScreenLock.wait(
+                        (remainingNanos / NANOS_PER_MILLISECOND).coerceIn(1L, MUX_TICKET_WAIT_MILLIS),
+                    )
+                }
+                if (closed.get() || muxedScreenTurns < ticket) {
+                    debugLog("airplay screen stream connection was not offered ticket=$ticket (session closing)")
+                    return null
+                }
+                while (!closed.get()) {
+                    muxedScreenConnections.poll()?.let { connection ->
+                        debugLog(
+                            "airplay screen stream ticket=$ticket claimed connection from " +
+                                "${connection.socket.remoteSocketAddress}",
+                        )
+                        return connection
+                    }
+                    val remainingNanos = deadlineNanos - System.nanoTime()
+                    if (remainingNanos <= 0) break
+                    muxedScreenLock.wait(
+                        (remainingNanos / NANOS_PER_MILLISECOND).coerceAtLeast(1L),
+                        (remainingNanos % NANOS_PER_MILLISECOND).toInt(),
+                    )
+                }
+                debugLog("airplay screen stream connection was not offered ticket=$ticket")
+                return null
+            } finally {
+                if (ticket + 1 > muxedScreenTurns) muxedScreenTurns = ticket + 1
+                muxedScreenLock.notifyAll()
+            }
+        }
     }
 
     private fun teardown() {
@@ -829,6 +969,11 @@ class AirPlaySession(
         safeClose(eventSocket)
         eventSocket = null
         eventCipher = null
+        while (true) {
+            val connection = muxedScreenConnections.poll() ?: break
+            safeClose(connection.socket)
+        }
+        synchronized(muxedScreenLock) { muxedScreenLock.notifyAll() }
         eventThreads.forEach { it.interrupt() }
         eventThreads.clear()
     }
@@ -841,40 +986,59 @@ class AirPlaySession(
             // need not wait for earlier unacknowledged data.
             socket.tcpNoDelay = true
             debugLog("airplay event connection accepted from ${socket.remoteSocketAddress} noDelay=${socket.tcpNoDelay}")
-            eventSocket = socket
-            val shared = pairVerify.shared
-            if (shared == null) {
-                Log.e(TAG, "airplay event rejected: pair-verify shared secret unavailable")
-                safeClose(socket)
-                close()
-                return
-            }
-            val writeKey = AirPlayCrypto.hkdfSha512(
-                shared,
-                "Events-Salt".asciiBytes(),
-                "Events-Write-Encryption-Key".asciiBytes(),
-                32,
-            )
-            val readKey = AirPlayCrypto.hkdfSha512(
-                shared,
-                "Events-Salt".asciiBytes(),
-                "Events-Read-Encryption-Key".asciiBytes(),
-                32,
-            )
-            eventCipher = ControlCipher(readKey, writeKey)
-            synchronized(eventWriteLock) {
-                sendPendingNightModeLocked()
-            }
-            val videoDelivery = videoPlaybackAvailability.setEventReady(true)
-            debugLog("airplay video event ready availability=$videoDelivery")
-            reapplyClusterContent()
-            runEventRead(socket)
+            handleEventChannel(socket)
         } catch (error: Exception) {
             if (!closed.get()) {
                 Log.e(TAG, "airplay event accept failed", error)
                 close()
             }
         }
+    }
+
+    /** The mux accepted this connection as the event channel by protocol order (it is the first one). */
+    private fun runEventChannel(socket: Socket) {
+        try {
+            socket.setSoLinger(true, 0)
+            socket.tcpNoDelay = true
+            debugLog("airplay event connection accepted from ${socket.remoteSocketAddress} noDelay=${socket.tcpNoDelay}")
+            handleEventChannel(socket)
+        } catch (error: Exception) {
+            if (!closed.get()) {
+                Log.e(TAG, "airplay event accept failed", error)
+                close()
+            }
+        }
+    }
+
+    private fun handleEventChannel(socket: Socket) {
+        eventSocket = socket
+        val shared = pairVerify.shared
+        if (shared == null) {
+            Log.e(TAG, "airplay event rejected: pair-verify shared secret unavailable")
+            safeClose(socket)
+            close()
+            return
+        }
+        val writeKey = AirPlayCrypto.hkdfSha512(
+            shared,
+            "Events-Salt".asciiBytes(),
+            "Events-Write-Encryption-Key".asciiBytes(),
+            32,
+        )
+        val readKey = AirPlayCrypto.hkdfSha512(
+            shared,
+            "Events-Salt".asciiBytes(),
+            "Events-Read-Encryption-Key".asciiBytes(),
+            32,
+        )
+        eventCipher = ControlCipher(readKey, writeKey)
+        synchronized(eventWriteLock) {
+            sendPendingNightModeLocked()
+        }
+        val videoDelivery = videoPlaybackAvailability.setEventReady(true)
+        debugLog("airplay video event ready availability=$videoDelivery")
+        reapplyClusterContent()
+        runEventRead(socket)
     }
 
     private fun runEventRead(socket: Socket) {
@@ -954,8 +1118,15 @@ class AirPlaySession(
         const val ZOOM_DIRECTION_OUT = 1
         const val EVENT_READY_POLL_MILLIS = 25L
         const val NANOS_PER_MILLISECOND = 1_000_000L
+
+        const val MUX_SCREEN_QUEUE_CAPACITY = 4
+        const val MUX_ADMIT_QUEUE_WAIT_MILLIS = 2_000L
+        const val MUX_TICKET_WAIT_MILLIS = 250L
     }
 }
+
+/** A connection on the pinned port admitted as a screen stream: its socket and buffered first byte. */
+internal class MuxedConnection(val socket: Socket, val input: InputStream)
 
 /** The features SETUP enables; video in car only when configured and the iPhone [proposed] it. */
 /** The session feature the iPhone proposes for main buffered audio. */

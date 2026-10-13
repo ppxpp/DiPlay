@@ -186,10 +186,11 @@ class LocalOnlyHotspotManager(context: Context, private val onDiagnostic: (Strin
         val executor = Executor { main.post(it) }
         if (Build.VERSION.SDK_INT == 33 || Build.VERSION.SDK_INT >= 36) {
             try {
-                val builder = SoftApConfiguration.Builder()
-                SoftApConfiguration.Builder::class.java.getMethod("setSsid", String::class.java)
+                val builderType = Class.forName("android.net.wifi.SoftApConfiguration\$Builder")
+                val builder = builderType.getConstructor().newInstance()
+                builderType.getMethod("setSsid", String::class.java)
                     .invoke(builder, "DiPlay-${UUID.randomUUID().toString().take(6)}")
-                SoftApConfiguration.Builder::class.java.getMethod("setPassphrase", String::class.java, Int::class.javaPrimitiveType)
+                builderType.getMethod("setPassphrase", String::class.java, Int::class.javaPrimitiveType)
                     .invoke(builder, UUID.randomUUID().toString().replace("-", "").take(20), SoftApConfiguration.SECURITY_TYPE_WPA2_PSK)
                 // Request the station's 5 GHz channel, or 36 without a 5 GHz station.
                 // BYD may override even a fixed channel (observed 40 -> 149), so credentials
@@ -199,17 +200,17 @@ class LocalOnlyHotspotManager(context: Context, private val onDiagnostic: (Strin
                 val preferredChannel = stationFrequency?.takeIf { it in 5160..5895 }
                     ?.let(::wifiFrequencyMhzToChannel) ?: 36
                 try {
-                    SoftApConfiguration.Builder::class.java.getMethod("setChannel", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+                    builderType.getMethod("setChannel", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
                         .invoke(builder, preferredChannel, SoftApConfiguration.BAND_5GHZ)
                 } catch (_: NoSuchMethodException) {
                     // Android 11 has no setChannel(channel, band); asking for the band
                     // alone still pins 5 GHz and leaves the channel to the firmware.
-                    SoftApConfiguration.Builder::class.java.getMethod("setBand", Int::class.javaPrimitiveType)
+                    builderType.getMethod("setBand", Int::class.javaPrimitiveType)
                         .invoke(builder, SoftApConfiguration.BAND_5GHZ)
                 }
                 val method = if (Build.VERSION.SDK_INT >= 36) "startLocalOnlyHotspotWithConfiguration" else "startLocalOnlyHotspot"
                 WifiManager::class.java.getMethod(method, SoftApConfiguration::class.java, Executor::class.java,
-                    WifiManager.LocalOnlyHotspotCallback::class.java).invoke(wifiManager, builder.build(), executor, callback)
+                    WifiManager.LocalOnlyHotspotCallback::class.java).invoke(wifiManager, builderType.getMethod("build").invoke(builder), executor, callback)
                 return preferredChannel
             } catch (failure: ReflectiveOperationException) {
                 if (failure.cause != null && failure.cause !is SecurityException && failure.cause !is UnsupportedOperationException) {

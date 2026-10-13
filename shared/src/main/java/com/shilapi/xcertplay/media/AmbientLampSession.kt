@@ -1,7 +1,7 @@
 package com.shilapi.xcertplay.media
 
 import com.shilapi.xcertplay.hud.BydAmbientLightPolicy
-import java.util.concurrent.CompletableFuture
+import java9.util.concurrent.CompletableFuture
 
 /** Serialized lamp lifecycle used by the real controller and fake-client tests. No audio or timer thread here. */
 internal class AmbientLampSession(

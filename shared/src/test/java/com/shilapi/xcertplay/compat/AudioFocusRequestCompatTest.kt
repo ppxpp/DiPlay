@@ -56,6 +56,20 @@ class AudioFocusRequestCompatTest {
         assertSame(sent, shadowOf(manager).lastAbandonedAudioFocusRequest)
     }
 
+    @Config(sdk = [25])
+    @Test fun android7PreservesVendorStreamInsteadOfCollapsingItToMusic() {
+        val vendorRequest = AudioFocusRequestCompat(
+            AudioManager.AUDIOFOCUS_GAIN,
+            AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build(),
+            { change -> changes += change }, Handler(Looper.getMainLooper()), streamType = 401,
+        )
+        vendorRequest.request(manager)
+        val sent = shadowOf(manager).lastAudioFocusRequest
+        assertEquals(401, sent.streamType)
+        vendorRequest.abandon(manager)
+        assertSame(sent.listener, shadowOf(manager).lastAbandonedAudioFocusListener)
+    }
+
     @Test fun legacyStreamFollowsTheUsage() {
         assertEquals(AudioManager.STREAM_MUSIC, AudioFocusRequestCompat.legacyStreamType(AudioAttributes.USAGE_MEDIA))
         assertEquals(

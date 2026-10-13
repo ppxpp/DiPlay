@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.res.Configuration
 import android.content.res.Resources
+import android.os.Build
 import android.util.DisplayMetrics
 import android.view.ContextThemeWrapper
 import com.shilapi.xcertplay.host.R
@@ -50,8 +51,7 @@ object InterfaceSize {
             screenWidthDp = (base.screenWidthDp / scale).roundToInt()
             screenHeightDp = (base.screenHeightDp / scale).roundToInt()
             smallestScreenWidthDp = (base.smallestScreenWidthDp / scale).roundToInt()
-            setLocales(base.locales)
-            setLayoutDirection(base.locales[0])
+            copyLocalesFrom(base)
         }
     }
 
@@ -62,8 +62,17 @@ object InterfaceSize {
      */
     internal fun contextOverride(scaled: Configuration): Configuration = Configuration().apply {
         densityDpi = scaled.densityDpi
-        setLocales(scaled.locales)
-        setLayoutDirection(scaled.locales[0])
+        copyLocalesFrom(scaled)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun Configuration.copyLocalesFrom(source: Configuration) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            setLocales(source.locales)
+        } else {
+            setLocale(source.locale)
+        }
+        setLayoutDirection(androidx.core.os.ConfigurationCompat.getLocales(source)[0])
     }
 
     /** Applies the density override for [base] to [activity]; call from attachBaseContext. */

@@ -32,6 +32,7 @@ import com.shilapi.xcertplay.host.R
  * SurfaceView; the map then lives in the launcher's layout. Each attached view gets its own decoder.
  * Off until the driver allows it in DiPlay. Android 11+. See docs/LAUNCHER_INTEGRATION.md.
  */
+@RequiresApi(Build.VERSION_CODES.R)
 class MapEmbedService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private val messenger = Messenger(Handler(Looper.getMainLooper()) { handle(it); true })

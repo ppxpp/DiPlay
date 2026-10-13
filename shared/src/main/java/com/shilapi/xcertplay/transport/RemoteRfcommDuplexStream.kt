@@ -72,7 +72,7 @@ class RemoteRfcommDuplexStream private constructor(
 
     companion object {
         fun connect(host: String, port: Int, token: String, onDiagnostic: (String) -> Unit = {}): RemoteRfcommDuplexStream {
-            require(host.isNotBlank() && port in 1..65535 && token.length in 16..256)
+            require(host.isNotBlank() && port in 1..65535 && RemoteRfcommProtocol.validToken(token))
             val socket = Socket()
             try {
                 socket.connect(InetSocketAddress(host, port), 10000)

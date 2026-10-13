@@ -1327,6 +1327,9 @@ class CarPlayController(
             val wirelessAirPlayConfig = airPlayConfig.copy(
                 deviceId = deviceIdentifier,
                 btMac = hostBluetoothMac,
+                // Wireless runs through the car's carnetserver firewall; pin every iPhone-initiated
+                // connection to a forwarded port (the wired path has no such firewall).
+                pinInboundPorts = true,
             )
 
             onStatus(CarPlayStatus.AttachingNetwork)

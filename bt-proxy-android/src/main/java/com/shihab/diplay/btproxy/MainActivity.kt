@@ -16,7 +16,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
-import android.util.Log
 import android.provider.Settings
 import android.view.View
 import android.widget.ArrayAdapter
@@ -26,9 +25,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class MainActivity : Activity() {
     private lateinit var statusView: TextView
@@ -37,7 +33,16 @@ class MainActivity : Activity() {
     private lateinit var logView: TextView
     private val mainHandler = Handler(Looper.getMainLooper())
     private val probe = BluetoothProbe(::appendLog)
-    private val gateway by lazy { RfcommGatewayServer(this, filesDir, ::appendLog) }
+    private lateinit var gatewayStatus: TextView
+    private val gatewayPreferences by lazy { getSharedPreferences("gateway", MODE_PRIVATE) }
+    private val refreshGateway = object : Runnable {
+        override fun run() {
+            if (destroyed) return
+            gatewayStatus.text = gatewayPreferences.getString("status", "等待自动启动")
+            logView.text = runCatching { File(filesDir, "probe-log.txt").readText() }.getOrDefault("")
+            mainHandler.postDelayed(this, 1000)
+        }
+    }
     private var devices: List<BluetoothDevice> = emptyList()
     private var destroyed = false
     private var sdpAddress: String? = null
@@ -87,6 +92,12 @@ class MainActivity : Activity() {
         addText(R.string.scope)
         statusView = TextView(this).apply { textSize = 16f }
         content.addView(statusView)
+        gatewayStatus = TextView(this).apply { textSize = 16f }
+        content.addView(gatewayStatus)
+        content.addView(Button(this).apply {
+            setText(R.string.gateway_pairing_information)
+            setOnClickListener { showPairingInformation() }
+        })
         permissionButton = Button(this).apply {
             setText(R.string.grant_permission)
             setOnClickListener {
@@ -138,6 +149,7 @@ class MainActivity : Activity() {
                 }
                 appendLog("phase=PAIRING bondState=${device.bondState} device=${device.name ?: "unknown"} " +
                     "address=**:**:**:${device.address.takeLast(8)}")
+                stopGatewayForProbe()
                 probe.connect(device)
             }
         }
@@ -149,6 +161,7 @@ class MainActivity : Activity() {
                     checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
                     adapter?.cancelDiscovery()
                 }
+                stopGatewayForProbe()
                 probe.connect(device, handshake = true)
             }
         }
@@ -159,14 +172,13 @@ class MainActivity : Activity() {
         addButton(R.string.start_gateway) {
             withSelectedDevice { device ->
                 probe.disconnect()
-                runCatching { gateway.start(device) }
-                    .onSuccess { window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+                gatewayPreferences.edit().putString("iphone", device.address).putBoolean("auto_start", true).apply()
+                runCatching { GatewayService.start(this) }
                     .onFailure { appendLog("phase=GATEWAY result=START_FAILED message=${it.message}") }
             }
         }
         addButton(R.string.stop_gateway) {
-            gateway.close()
-            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            stopGatewayForProbe()
         }
         logView = TextView(this).apply {
             textSize = 12f
@@ -206,6 +218,13 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         refreshEnvironment()
+        mainHandler.removeCallbacks(refreshGateway)
+        refreshGateway.run()
+    }
+
+    override fun onPause() {
+        mainHandler.removeCallbacks(refreshGateway)
+        super.onPause()
     }
 
     override fun onRequestPermissionsResult(
@@ -234,7 +253,8 @@ class MainActivity : Activity() {
         }
         statusView.text = getString(R.string.environment, Build.MANUFACTURER, Build.MODEL,
             Build.VERSION.RELEASE, Build.VERSION.SDK_INT, getString(bluetoothState))
-        val previousAddress = devices.getOrNull(devicePicker.selectedItemPosition)?.address
+        val previousAddress = gatewayPreferences.getString("iphone", null)
+            ?: devices.getOrNull(devicePicker.selectedItemPosition)?.address
         devices = if (hasPermission) {
             try { adapter?.bondedDevices?.sortedBy { it.name ?: it.address }.orEmpty() }
             catch (_: SecurityException) { emptyList() }
@@ -245,6 +265,10 @@ class MainActivity : Activity() {
         val selection = devices.indexOfFirst { it.address == previousAddress }.takeIf { it >= 0 }
             ?: devices.indexOfFirst { it.name?.contains("iphone", ignoreCase = true) == true }.coerceAtLeast(0)
         devicePicker.setSelection(selection)
+        if (hasPermission && gatewayPreferences.getBoolean("auto_start", true)) {
+            runCatching { GatewayService.start(this) }
+                .onFailure { appendLog("phase=AUTO_GATEWAY result=START_FAILED error=${it.javaClass.simpleName}") }
+        }
     }
 
     private fun hasBluetoothPermission() = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
@@ -267,26 +291,53 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun stopGatewayForProbe() {
+        gatewayPreferences.edit().putBoolean("auto_start", false).apply()
+        stopService(Intent(this, GatewayService::class.java))
+    }
+
+    private fun showPairingInformation() {
+        val information = runCatching { GatewayConfiguration.pairingInformation(this) }.getOrNull()
+        if (information == null) {
+            val input = android.widget.EditText(this).apply { hint = "本机蓝牙地址（系统设置中查看）" }
+            android.app.AlertDialog.Builder(this).setTitle("首次配置 Android A")
+                .setMessage("此 Android 系统限制读取本机蓝牙地址，请填写系统蓝牙设置中显示的本机地址。")
+                .setView(input).setNegativeButton("取消", null)
+                .setPositiveButton("保存") { _, _ ->
+                    val address = input.text.toString().trim()
+                    if (GatewayConfiguration.validAddress(address)) {
+                        File(filesDir, "gateway-bluetooth-mac.txt").writeText(address)
+                        showPairingInformation()
+                        refreshEnvironment()
+                    } else android.widget.Toast.makeText(this, "蓝牙地址格式无效", android.widget.Toast.LENGTH_SHORT).show()
+                }.show()
+            return
+        }
+        val text = TextView(this).apply {
+            setPadding(32, 24, 32, 24)
+            text = org.json.JSONObject(information).getString("token").chunked(6).joinToString(" ")
+            setTextIsSelectable(true)
+        }
+        android.app.AlertDialog.Builder(this).setTitle("与 DiPlay 配对")
+            .setMessage("在 B 的 DiPlay 中打开“A 设备”，找到本机后输入或粘贴此配对码。首次配对后两端自动保存。")
+            .setView(text).setNegativeButton("关闭", null)
+            .setPositiveButton("复制配对码") { _, _ ->
+                getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("DiPlay pairing", org.json.JSONObject(information).getString("token")))
+            }.show()
+    }
+
     private fun appendLog(message: String) {
-        val timestamp = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
-        val line = "$timestamp $message"
-        Log.i("BtProxyProbe", line)
+        ProxyLog.append(this, message)
         mainHandler.post {
-            if (destroyed) return@post
-            val text = (logView.text.toString().lineSequence().takeLastLines(199) + line).joinToString("\n")
-            logView.text = text
-            runCatching { File(filesDir, "probe-log.txt").writeText(text + "\n") }
+            if (!destroyed) logView.text = runCatching { File(filesDir, "probe-log.txt").readText() }.getOrDefault("")
         }
     }
 
     override fun onDestroy() {
         destroyed = true
         probe.close()
-        gateway.close()
         mainHandler.removeCallbacksAndMessages(null)
         unregisterReceiver(receiver)
         super.onDestroy()
     }
 }
-
-private fun Sequence<String>.takeLastLines(count: Int): List<String> = toList().takeLast(count)

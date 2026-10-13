@@ -45,7 +45,7 @@ class RemoteRfcommGateway(
     val observedHotspotAddress: String? = null,
 ) {
     init {
-        require(gatewayBluetoothMac.matches(Regex("(?i)[0-9a-f]{2}(:[0-9a-f]{2}){5}")) && token.length in 16..256)
+        require(gatewayBluetoothMac.matches(Regex("(?i)[0-9a-f]{2}(:[0-9a-f]{2}){5}")) && com.shilapi.xcertplay.transport.RemoteRfcommProtocol.validToken(token))
         require(observedHotspotChannel == null || observedHotspotChannel in 1..196)
         require((observedHotspotChannel == null) == (observedHotspotAddress == null))
     }

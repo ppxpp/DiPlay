@@ -17,6 +17,7 @@ class AudioFocusRequestCompat(
     val attributes: AudioAttributes,
     private val listener: AudioManager.OnAudioFocusChangeListener,
     private val handler: Handler,
+    private val streamType: Int? = null,
 ) {
     private val platformRequest: Any? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         AudioFocusRequest.Builder(gain)
@@ -37,7 +38,7 @@ class AudioFocusRequestCompat(
             manager.requestAudioFocus(platformRequest as AudioFocusRequest)
         } else {
             @Suppress("DEPRECATION")
-            manager.requestAudioFocus(legacyListener, legacyStreamType(attributes.usage), gain)
+            manager.requestAudioFocus(legacyListener, streamType ?: legacyStreamType(attributes.usage), gain)
         }
 
     fun abandon(manager: AudioManager): Int =

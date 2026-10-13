@@ -1,0 +1,23 @@
+<resources>
+    <string name="gateway_title">Proxy device · Find and connect</string>
+    <string name="gateway_description">The proxy connects to your iPhone over Bluetooth. DiPlay finds it on your Wi-Fi; no IP address or pairing code is needed.</string>
+    <string name="gateway_search">Find proxy again</string>
+    <string name="gateway_connect">Connect CarPlay through proxy</string>
+    <string name="gateway_forget">Choose another proxy</string>
+    <string name="gateway_forget_confirm">Clear the selected proxy and search again?</string>
+    <string name="gateway_searching">Searching for proxy…</string>
+    <string name="gateway_found_unpaired">Found A · %1$s\nNot paired yet. Enter A’s pairing information once to save it.</string>
+    <string name="gateway_found_paired">Found proxy · %1$s\nTap below to connect CarPlay.</string>
+    <string name="gateway_not_found">Proxy was not found. Check that the proxy is running and both devices are on the same LAN, then search again.</string>
+    <string name="gateway_pair">Pair this A</string>
+    <string name="gateway_pairing_input">Pairing information or pairing code</string>
+    <string name="gateway_pairing_help">Open “Pairing information” on A. Enter its pairing code or paste the full pairing information here. This is only needed the first time.</string>
+    <string name="gateway_save_pairing">Verify and save</string>
+    <string name="gateway_invalid_pairing">Invalid pairing information or device mismatch</string>
+    <string name="gateway_pairing_rejected">Pairing failed. Check the pairing information and that A is available.</string>
+    <string name="gateway_wifi_required">Save the current Wi-Fi name and password in DiPlay connection settings first.</string>
+    <string name="gateway_ready">Selected proxy · ready to connect</string>
+    <string name="gateway_check_connection">Check proxy connection</string>
+    <string name="gateway_direct_connected">Proxy reachable · %1$s:%2$d\nTCP connection, authorization and identity verified. Tap below to connect CarPlay.</string>
+    <string name="gateway_direct_failed">Proxy connection failed · %1$s:%2$d\n%3$s</string>
+</resources>

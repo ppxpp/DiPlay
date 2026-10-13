@@ -22,7 +22,7 @@ internal class ManualHotspotInterfaces(
     private var lastLegacyDiagnostic: String? = null
 
     fun sample(): HotspotNetworkSnapshot {
-        val ap = publicTethering?.interfaces ?: legacyApInterfaces()
+        val ap = if (Build.VERSION.SDK_INT >= 36) publicTethering?.interfaces ?: legacyApInterfaces() else legacyApInterfaces()
         val before = runCatching { connectivity?.activeNetwork }
         val upstreams = runCatching {
             checkNotNull(connectivity)
@@ -73,7 +73,7 @@ internal class ManualHotspotInterfaces(
         ap
     }.getOrNull()
 
-    override fun close() { publicTethering?.close() }
+    override fun close() { if (Build.VERSION.SDK_INT >= 36) publicTethering?.close() }
 
     @RequiresApi(36)
     private class PublicTethering(context: Context) : Closeable {

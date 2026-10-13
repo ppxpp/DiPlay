@@ -16,7 +16,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * transmit stamps. The resulting offset and round-trip time steer a local monotonic clock onto
  * the phone's media-clock domain, which /feedback reports.
  */
-class NtpClock : Closeable {
+class NtpClock(
+    /** Firewall ports the timing socket should prefer; null keeps an ephemeral port. */
+    private val preferredPorts: IntArray? = null,
+    /** The control connection's local address; its family picks the listener's wildcard. */
+    private val bindAddress: InetAddress? = null,
+) : Closeable {
     private val running = AtomicBoolean(false)
     private val socketLock = Any()
     private val clockLock = Any()
@@ -37,9 +42,7 @@ class NtpClock : Closeable {
 
     fun listen(): Int {
         check(!running.getAndSet(true)) { "NtpClock is already running" }
-        val bound = DatagramSocket(null)
-        bound.reuseAddress = true
-        bound.bind(InetSocketAddress(InetAddress.getByName("::"), 0))
+        val bound = CarFirewallPorts.udpSocket(bindAddress, preferredPorts)
         synchronized(socketLock) { socket = bound }
         receiver = Thread(::runReceiver, "airplay-ntp-rx").apply { isDaemon = true; start() }
         return bound.localPort
@@ -217,8 +220,10 @@ private fun ntp64Now(): BigInteger {
 }
 
 private fun ntpFromNanos(ns: Long): BigInteger {
-    val seconds = BigInteger.valueOf(Math.floorDiv(ns, 1_000_000_000L))
-    val nanos = BigInteger.valueOf(Math.floorMod(ns, 1_000_000_000L))
+    // Math.floorDiv/floorMod are unavailable on Android 6. Preserve floor semantics for negatives.
+    val remainder = ns % 1_000_000_000L
+    val seconds = BigInteger.valueOf(ns / 1_000_000_000L - if (remainder < 0) 1 else 0)
+    val nanos = BigInteger.valueOf(if (remainder < 0) remainder + 1_000_000_000L else remainder)
     return seconds.shiftLeft(32).or(nanos.shiftLeft(32).divide(NANOS_PER_SECOND))
 }
 

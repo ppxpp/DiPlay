@@ -54,6 +54,9 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/update_apk_paths" />
         </provider>
+        <activity android:name="com.shilapi.xcertplay.GatewayDeviceActivity"
+            android:exported="false" android:hardwareAccelerated="false"
+            android:theme="@style/Theme.Xcertplay" />
         <activity android:name="com.shilapi.xcertplay.DiPlayActivity"
             android:exported="true" android:launchMode="singleTop"
             android:resizeableActivity="true"
@@ -133,6 +136,8 @@
         <!-- The live dashboard map for launchers that embed it (docs/LAUNCHER_INTEGRATION.md). -->
         <service
             android:name="com.shilapi.xcertplay.MapEmbedService"
+            android:enabled="@bool/map_embed_service_supported"
+            tools:targetApi="30"
             android:exported="true"
             tools:ignore="ExportedService">
             <intent-filter>

@@ -19,6 +19,8 @@ import java.util.List;
 
 /** Detached shell helper: one fixed package/op, sequenced commands, ten-second recovery lease. */
 public final class BydCallPopupTool {
+    // Linux O_CLOEXEC exists on old Android, but its Java constant was exposed only in API 27.
+    private static final int OPEN_CLOSE_ON_EXEC = 02000000;
     static final String DIRECTORY = "/data/local/tmp/diplay-call-popup";
     static final String PACKAGE = "com.byd.bluetoothcall";
     private final String base;
@@ -37,7 +39,7 @@ public final class BydCallPopupTool {
             if (Os.lstat(DIRECTORY).st_uid != 2000 || !OsConstants.S_ISDIR(Os.lstat(DIRECTORY).st_mode) ||
                     (Os.lstat(DIRECTORY).st_mode & 0077) != 0) throw new IOException();
             FileDescriptor fd = Os.open(DIRECTORY + "/active.lock", OsConstants.O_CREAT |
-                    OsConstants.O_RDWR | OsConstants.O_NOFOLLOW | OsConstants.O_CLOEXEC, 0600);
+                    OsConstants.O_RDWR | OsConstants.O_NOFOLLOW | OPEN_CLOSE_ON_EXEC, 0600);
             try (FileOutputStream file = new FileOutputStream(fd)) {
                 if (Os.fstat(fd).st_uid != 2000 || !OsConstants.S_ISREG(Os.fstat(fd).st_mode)) throw new IOException();
                 try (FileLock lock = file.getChannel().tryLock()) {
@@ -57,7 +59,7 @@ public final class BydCallPopupTool {
         String line = (lease == null ? 0 : lease.sequence()) + " " + status + "\n";
         try {
             FileDescriptor fd = Os.open(base + ".status.tmp", OsConstants.O_CREAT | OsConstants.O_TRUNC |
-                    OsConstants.O_WRONLY | OsConstants.O_NOFOLLOW | OsConstants.O_CLOEXEC, 0600);
+                    OsConstants.O_WRONLY | OsConstants.O_NOFOLLOW | OPEN_CLOSE_ON_EXEC, 0600);
             try (FileOutputStream out = new FileOutputStream(fd)) { out.write(line.getBytes(StandardCharsets.US_ASCII)); }
             Os.rename(base + ".status.tmp", base + ".status");
         } catch (Exception error) { throw new IllegalStateException("STATUS_WRITE_FAILED", error); }
@@ -89,7 +91,7 @@ public final class BydCallPopupTool {
                     if (Os.lstat(command.getPath()).st_uid != 2000 ||
                             !OsConstants.S_ISREG(Os.lstat(command.getPath()).st_mode)) throw new IOException();
                     FileDescriptor fd = Os.open(command.getPath(), OsConstants.O_RDONLY |
-                            OsConstants.O_NOFOLLOW | OsConstants.O_CLOEXEC, 0);
+                            OsConstants.O_NOFOLLOW | OPEN_CLOSE_ON_EXEC, 0);
                     try (FileInputStream in = new FileInputStream(fd)) {
                         StringBuilder line = new StringBuilder();
                         int c;

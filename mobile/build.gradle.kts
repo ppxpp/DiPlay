@@ -16,8 +16,9 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.shihab.diplay"
-        minSdk = 25
+//        applicationId = "com.shihab.diplay"
+        applicationId = "com.gtmc.app.fengyunyx.b819"
+        minSdk = 23
         targetSdk = 37
         versionCode = 37
         versionName = "0.2.18"
@@ -41,7 +42,6 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".hudtest"
             versionNameSuffix = "-hud-test"
         }
         release {
@@ -52,6 +52,7 @@ android {
         }
     }
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
@@ -61,6 +62,7 @@ android {
 }
 
 dependencies {
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
     implementation(platform(libs.androidx.compose.bom))
     implementation(project(":common"))
     implementation(project(":shared"))

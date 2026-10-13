@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -68,6 +68,8 @@
         <!-- Only Telecom can bind it; it carries no UI or audio, see PhoneAudioRoute. -->
         <service
             android:name="com.shilapi.xcertplay.telecom.PhoneAudioConnectionService"
+            android:enabled="@bool/phone_audio_service_supported"
+            tools:targetApi="26"
             android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE"
             android:exported="true">
             <intent-filter>

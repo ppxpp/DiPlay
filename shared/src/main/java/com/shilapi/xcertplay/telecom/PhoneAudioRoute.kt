@@ -196,7 +196,7 @@ object PhoneAudioRoute {
             watcher = VoipCallWatcher(context) { active -> voipApp(active) }.also { it.start() }
             Log.i(TAG, "watching for voice-over-IP calls in other apps")
         } else if (!wantWatcher && watcher != null) {
-            watcher?.stop()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) watcher?.stop()
             watcher = null
             voipApp(false)
         }

@@ -12,7 +12,6 @@ import com.shilapi.xcertplay.transport.Iap2IdentificationClient
 import com.shilapi.xcertplay.transport.Iap2IdentificationConfig
 import com.shilapi.xcertplay.transport.Iap2WirelessIdentification
 import com.shilapi.xcertplay.transport.RemoteRfcommDuplexStream
-import org.json.JSONObject
 import java.io.File
 
 /** Privileged debug entry point: real phone authentication through the Android A relay. */
@@ -47,7 +46,7 @@ class RemoteCarPlayProbeActivity : Activity() {
         Thread({
             var phase = "CONFIGURATION"
             try {
-                val settings = JSONObject(File(filesDir, "remote-probe.json").readText())
+                val gateway = RemoteGatewaySettings.load(this) ?: error("Pair Android A from the A device page first")
                 val ssid = AirPlayPersistence.loadExistingWifiSsid(this)
                 require(ssid.isNotBlank()) { "Configure Existing Wi-Fi SSID first" }
                 val directory = File(noBackupFilesDir, LocalMfiAuthenticationClient.DIRECTORY).apply { mkdirs() }
@@ -60,8 +59,7 @@ class RemoteCarPlayProbeActivity : Activity() {
                 report("CONFIGURATION_READY wifiConfigured=true authenticationLoaded=true")
                 phase = "REMOTE_RFCOMM"
                 val remote = com.shilapi.xcertplay.transport.RemoteGatewayDiscovery.connect(this,
-                    com.shilapi.xcertplay.orchestration.RemoteRfcommGateway(
-                        settings.getString("gatewayBluetoothMac"), settings.getString("token")), ::report)
+                    gateway, ::report)
                 stream = remote
                 Iap2Session.openWireless(remote, "remote-probe", { report(it.substringBefore('\n')) }).use { session ->
                     phase = "IAP2_LINK"

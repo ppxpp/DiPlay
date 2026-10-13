@@ -481,7 +481,7 @@ internal class CaptureClock(private val sampleRate: Int) {
         samplesRead += samples
         lastReadSamples = samples
         val now = System.nanoTime()
-        val stamped = runCatching {
+        val stamped = android.os.Build.VERSION.SDK_INT >= 24 && runCatching {
             recorder.getTimestamp(timestamp, android.media.AudioTimestamp.TIMEBASE_MONOTONIC) == AudioRecord.SUCCESS
         }.getOrDefault(false)
         lastReadEndNs = if (stamped && timestamp.nanoTime > 0) {

@@ -155,8 +155,8 @@ object AmbientMusicController {
     }
 
     /** Checks existing authorization and lamp readback only; never asks for ADB or writes a lamp. */
-    fun checkSupport(context: Context): java.util.concurrent.CompletableFuture<Boolean> {
-        val result = java.util.concurrent.CompletableFuture<Boolean>()
+    fun checkSupport(context: Context): java9.util.concurrent.CompletableFuture<Boolean> {
+        val result = java9.util.concurrent.CompletableFuture<Boolean>()
         executor.execute {
             if (lampSession.isReady()) {
                 result.complete(true)
