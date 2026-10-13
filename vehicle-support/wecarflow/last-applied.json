@@ -1,6 +1,6 @@
 {
-  "package": "com.gtmc.app.fengyunyx.b819",
-  "authorization": "package-and-uid",
+  "authorization": "none",
+  "protection": "connection-boolean",
   "peerProcesses": [
     ":boot",
     ":dexopt",

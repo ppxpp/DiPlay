@@ -4,9 +4,7 @@ import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.database.Cursor;
 import android.net.Uri;
-import android.os.Binder;
 import android.os.Bundle;
-import android.os.Process;
 
 /** Non-exported providers give each declared process a context and a synchronous pause barrier. */
 public class GuardStateProvider extends ContentProvider {
@@ -16,7 +14,6 @@ public class GuardStateProvider extends ContentProvider {
         return true;
     }
     @Override public Bundle call(String method, String arg, Bundle extras) {
-        if (Binder.getCallingUid() != Process.myUid()) throw new SecurityException("QQ process only");
         Bundle result = new Bundle();
         if ("status".equals(method)) result.putBoolean("guarded", GuardRuntime.guarded);
         else if ("pause".equals(method)) result.putBoolean("paused", GuardRuntime.pauseHere());

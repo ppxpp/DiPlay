@@ -13,7 +13,7 @@ import com.shilapi.xcertplay.vehicle.api.NowPlayingSnapshot
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/** Explicit, acknowledged lease. The peer releases it when this process's Binder dies. */
+/** Connection protection switch; Binder supplies media callbacks and process-death cleanup. */
 internal class QQMusicPlaybackGuardClient(
     context: Context,
     private val report: (String) -> Unit,
@@ -21,13 +21,11 @@ internal class QQMusicPlaybackGuardClient(
     private val onCommand: (MediaCommand) -> Boolean,
 ) : LocalPlaybackGuardClient {
     private val context = context.applicationContext
-    private val owner = object : Binder() {
+    private val callback = object : Binder() {
         override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
             if (code == INTERFACE_TRANSACTION) { reply?.writeString(DESCRIPTOR); return true }
             if (code != 1) return super.onTransact(code, data, reply, flags)
             data.enforceInterface(DESCRIPTOR)
-            val uid = context.packageManager.getApplicationInfo(COMPONENT.packageName, 0).uid
-            check(Binder.getCallingUid() == uid) { "Untrusted media command callback" }
             val command = when (data.readInt()) {
                 1 -> MediaCommand.PLAY; 2 -> MediaCommand.PAUSE
                 4 -> MediaCommand.NEXT; 5 -> MediaCommand.PREVIOUS
@@ -80,7 +78,7 @@ internal class QQMusicPlaybackGuardClient(
         val response = Parcel.obtain()
         return try {
             request.writeInterfaceToken(DESCRIPTOR)
-            request.writeStrongBinder(owner)
+            request.writeStrongBinder(callback)
             if (!service.transact(code, request, response, 0)) false else {
                 response.readException()
                 response.readInt() == 1
@@ -88,7 +86,7 @@ internal class QQMusicPlaybackGuardClient(
         } finally { request.recycle(); response.recycle() }
     }
 
-    /** Fallback for the fixed WeCarFlow widget service; publish only under our own lease. */
+    /** Fallback for the fixed WeCarFlow widget service while protection is active. */
     fun publish(snapshot: NowPlayingSnapshot): Boolean {
         if (closed) return false
         val service = peer ?: return false
@@ -96,7 +94,7 @@ internal class QQMusicPlaybackGuardClient(
         val response = Parcel.obtain()
         return try {
             request.writeInterfaceToken(DESCRIPTOR)
-            request.writeStrongBinder(owner)
+            request.writeStrongBinder(callback)
             request.writeString(snapshot.title)
             request.writeString(snapshot.artist)
             request.writeString(snapshot.album)

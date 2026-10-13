@@ -21,11 +21,11 @@ public final class GuardRuntime {
     static volatile Context context;
     static volatile boolean mainProcess;
     private static final ArrayList<WeakReference<Object>> players = new ArrayList<>();
-    static volatile IBinder ownerCallback;
+    static volatile IBinder mediaCallback;
     private GuardRuntime() {}
     public static boolean isGuarded() { return guarded; }
     public static boolean forwardMediaCommand(int command) {
-        IBinder callback = ownerCallback;
+        IBinder callback = mediaCallback;
         if (!guarded || callback == null) return false;
         Parcel data = Parcel.obtain(), reply = Parcel.obtain();
         try {
@@ -111,7 +111,7 @@ public final class GuardRuntime {
         final Runnable pause = new Runnable() {
             @Override public void run() {
                 try {
-                    // A queued task must not pause native audio after its lease was cleared.
+                    // A queued task must not pause native audio after protection was cleared.
                     // Peer processes read the authoritative main-process state through shouldBlock().
                     if (!cancelled.get() && shouldBlock() && !cancelled.get()) result[0] = pausePlayers();
                 } finally { done.countDown(); }

@@ -68,7 +68,7 @@ class VehicleMediaRuntime private constructor(
                 if (generation.get() == revision && session != null && !disposed) publishLatest()
             }, 1, 1, TimeUnit.SECONDS)
         }
-        leaseWorker.execute {
+        protectionWorker.execute {
             guard?.close()
             guard = null
             retriedGuard = false
@@ -98,7 +98,7 @@ class VehicleMediaRuntime private constructor(
         QQMusicPlaybackGuardClient(context, report, onLost = {
             if (generation.get() == revision && session != null && !disposed) {
                 protected = false
-                leaseWorker.execute {
+                protectionWorker.execute {
                     if (generation.get() != revision || session == null || disposed) return@execute
                     guard?.close()
                     val replacement = newGuard(revision)
@@ -172,7 +172,7 @@ class VehicleMediaRuntime private constructor(
                 if (!retriedGuard) {
                     retriedGuard = true
                     val revision = generation.get()
-                    leaseWorker.execute {
+                    protectionWorker.execute {
                         if (generation.get() == revision && session != null && !disposed) {
                             guard?.close()
                             guard = newGuard(revision)
@@ -196,7 +196,7 @@ class VehicleMediaRuntime private constructor(
         VehiclePlaybackProtection.detach(this)
         // Do not stop a newer runtime's PAL consumer while the old one is being disposed.
         main.post { if (!VehiclePlaybackProtection.hasActiveSession) PalSteeringWheelInputAdapter.stop() }
-        leaseWorker.execute { guard?.close(); guard = null }
+        protectionWorker.execute { guard?.close(); guard = null }
         worker.execute { progressTask?.cancel(false); progressTask = null; instrument.close() }
     }
 
@@ -204,7 +204,7 @@ class VehicleMediaRuntime private constructor(
         private val worker = Executors.newSingleThreadScheduledExecutor { task ->
             Thread(task, "diplay-vehicle-media").apply { isDaemon = true }
         }
-        private val leaseWorker = Executors.newSingleThreadExecutor { task ->
+        private val protectionWorker = Executors.newSingleThreadExecutor { task ->
             Thread(task, "diplay-playback-guard").apply { isDaemon = true }
         }
         fun create(context: Context, sendCommand: (MediaCommand) -> Boolean, report: (String) -> Unit): VehicleMediaRuntime? =

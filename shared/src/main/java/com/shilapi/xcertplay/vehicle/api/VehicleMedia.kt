@@ -20,7 +20,7 @@ interface SteeringWheelInputSource {
 }
 
 interface LocalPlaybackGuardClient : Closeable {
-    /** True only after the other process confirms its playback gate is active. */
+    /** True only after the other process confirms the connection's playback gate is active. */
     fun acquire(): Boolean
 }
 

@@ -128,7 +128,6 @@ def main():
             output.parent.mkdir(parents=True,exist_ok=True); output.write_text(data)
         package=sources/'com/tencent/wecarflow/carplayguard'
         config = ('package com.tencent.wecarflow.carplayguard;\nfinal class GuardConfig {\n'
-                  'static final String PACKAGE = "com.gtmc.app.fengyunyx.b819";\n'
                   'static final String[] PEER_AUTHORITIES = '+array(authorities)+';\n'
                   'static final String[] PEER_PROCESSES = '+array(processes)+';\n'
                   'static final boolean BRIDGE_AVAILABLE = '+str(bool(bridge_sources)).lower()+';\n}\n')
@@ -173,7 +172,7 @@ def main():
         block='\n    <!-- CARPLAY_GUARD_V1_BEGIN -->\n'+''.join('        '+entry+'\n' for entry in entries)+'    <!-- CARPLAY_GUARD_V1_END -->\n'
         text=text.replace('    </application>',block+'    </application>')
         ET.fromstring(text); manifest.write_text(text)
-        record={'package':'com.gtmc.app.fengyunyx.b819','authorization':'package-and-uid','peerProcesses':processes,
+        record={'authorization':'none','protection':'connection-boolean','peerProcesses':processes,
                 'hooks':HOOKS,'registeredPlayers':REGISTER,'bridgeAvailable':bool(bridge_sources)}
         (HERE/'last-applied.json').write_text(json.dumps(record,ensure_ascii=False,indent=2)+'\n')
         print('Applied guard smali and '+str(sum(map(len,HOOKS.values())))+' exact playback hooks; no full APK built')

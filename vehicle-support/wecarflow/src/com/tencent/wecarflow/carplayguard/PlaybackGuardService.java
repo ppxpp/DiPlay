@@ -2,7 +2,6 @@ package com.tencent.wecarflow.carplayguard;
 
 import android.app.Service;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.os.Binder;
 import android.os.IBinder;
 import android.os.Parcel;
@@ -11,8 +10,9 @@ import android.os.RemoteException;
 /** Explicit bound service, raw Binder v1. No platform volume/source changes. */
 public final class PlaybackGuardService extends Service {
     private static final String DESCRIPTOR = "com.shilapi.xcertplay.vehicle.LocalPlaybackGuard.v1";
-    private IBinder owner;
-    private int ownerUid = -1;
+    private IBinder callback;
+    private long callbackRevision;
+    private boolean callbackLinked;
     private boolean ready;
     private IBinder.DeathRecipient death;
     private final Binder endpoint = new Binder() {
@@ -20,23 +20,21 @@ public final class PlaybackGuardService extends Service {
             if (code == INTERFACE_TRANSACTION) { reply.writeString(DESCRIPTOR); return true; }
             if (code < 1 || code > 4) return super.onTransact(code, data, reply, flags);
             data.enforceInterface(DESCRIPTOR);
-            int uid = Binder.getCallingUid();
-            if (!authorized(uid)) throw new SecurityException("Untrusted CarPlay guard caller");
             boolean result;
             synchronized (PlaybackGuardService.this) {
-                if (code == 1) result = acquire(uid, data.readStrongBinder());
+                if (code == 1) result = acquire(data.readStrongBinder());
                 else if (code == 2) {
-                    IBinder token = data.readStrongBinder();
-                    result = owner != null && uid == ownerUid && owner.equals(token);
-                    if (result) clear();
+                    data.readStrongBinder(); // Wire compatibility; no owner authorization.
+                    clear();
+                    result = true;
                 } else if (code == 3) result = ready && GuardRuntime.guarded;
                 else {
-                    IBinder token = data.readStrongBinder();
+                    data.readStrongBinder(); // Wire compatibility; no owner authorization.
                     String title = data.readString(), artist = data.readString(), album = data.readString();
                     long duration = data.readLong(), elapsed = data.readLong();
                     boolean playing = data.readInt() != 0;
                     result = false;
-                    if (owner != null && uid == ownerUid && owner.equals(token) && ready) {
+                    if (ready && GuardRuntime.guarded) {
                         long identity = Binder.clearCallingIdentity();
                         try { result = GuardRuntime.publishRemote(PlaybackGuardService.this, title, artist, album,
                                 Math.max(0, duration), Math.max(0, elapsed), playing); }
@@ -50,39 +48,36 @@ public final class PlaybackGuardService extends Service {
     };
     @Override public IBinder onBind(Intent intent) { return endpoint; }
 
-    private boolean authorized(int uid) {
-        try {
-            PackageManager pm = getPackageManager();
-            String[] packages = pm.getPackagesForUid(uid);
-            boolean found = false;
-            if (packages != null) for (String pkg : packages) if (GuardConfig.PACKAGE.equals(pkg)) found = true;
-            if (!found) return false;
-            return pm.getApplicationInfo(GuardConfig.PACKAGE, 0).uid == uid;
-        } catch (Exception e) { return false; }
-    }
-    private boolean acquire(int uid, final IBinder token) {
-        if (token == null || !token.isBinderAlive()) return false;
-        if (owner != null) return uid == ownerUid && owner.equals(token) && ready;
-        owner = token; ownerUid = uid;
+    private boolean acquire(final IBinder target) {
+        if (target == null) return false; // A callback is needed for control and process-death cleanup.
+        if (callbackLinked && callback != null && death != null) callback.unlinkToDeath(death, 0);
+        callbackLinked = false;
+        callback = target;
+        final long revision = ++callbackRevision;
         death = new IBinder.DeathRecipient() {
             @Override public void binderDied() {
-                synchronized (PlaybackGuardService.this) { if (token.equals(owner)) clear(); }
+                synchronized (PlaybackGuardService.this) {
+                    if (revision == callbackRevision) clear();
+                }
             }
         };
-        try { token.linkToDeath(death, 0); }
+        try { target.linkToDeath(death, 0); callbackLinked = true; }
         catch (RemoteException e) { clear(); return false; }
-        GuardRuntime.ownerCallback = token;
+        GuardRuntime.mediaCallback = target;
+        if (ready && GuardRuntime.guarded) return true;
         GuardRuntime.guarded = true;
         long identity = Binder.clearCallingIdentity();
         try { ready = GuardRuntime.pauseAllProcesses(this); }
         finally { Binder.restoreCallingIdentity(identity); }
-        if (!ready || !token.isBinderAlive()) { clear(); return false; }
+        if (!ready || !target.isBinderAlive()) { clear(); return false; }
         return true;
     }
     private void clear() {
-        if (owner != null && death != null) owner.unlinkToDeath(death, 0);
-        owner = null; ownerUid = -1; death = null; ready = false; GuardRuntime.guarded = false;
-        GuardRuntime.ownerCallback = null;
+        if (callbackLinked && callback != null && death != null) callback.unlinkToDeath(death, 0);
+        callbackLinked = false;
+        ++callbackRevision;
+        callback = null; death = null; ready = false; GuardRuntime.guarded = false;
+        GuardRuntime.mediaCallback = null;
         GuardRuntime.restoreLocal();
     }
     @Override public synchronized void onDestroy() { clear(); super.onDestroy(); }
