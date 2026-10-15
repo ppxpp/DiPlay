@@ -77,7 +77,11 @@ class IphoneUsbHost(
 
     sealed class PermissionRequest {
         data class AlreadyGranted(val device: UsbDevice) : PermissionRequest()
-        data class Requested(val device: UsbDevice) : PermissionRequest()
+        data class Requested(
+            val device: UsbDevice,
+            val afterMissingUiAdbFailure: Boolean = false,
+        ) : PermissionRequest()
+        data class AdbRequired(val device: UsbDevice) : PermissionRequest()
     }
 
     sealed class PermissionResult {
@@ -100,13 +104,32 @@ class IphoneUsbHost(
     fun discover(): List<UsbDevice> =
         usbManager.deviceList.values.filter { matcher.matches(it.vendorId, it.productId) }
 
+    /**
+     * Every USB device Android lists, as `vid:pid node` like [Ch341UsbHost.describe], sorted. When no iPhone is
+     * listed, this shows whether Android sees anything on the head unit's port at all.
+     */
+    fun listedDevices(): List<String> =
+        usbManager.deviceList.values.map(Ch341UsbHost::describe).sorted()
+
     @Throws(IphoneUsbException::class)
-    fun requestPermission(device: UsbDevice): PermissionRequest {
+    fun requestPermission(device: UsbDevice, allowAdbFallback: Boolean = true): PermissionRequest {
         requireConfiguredDevice(device)
         if (usbManager.hasPermission(device)) return PermissionRequest.AlreadyGranted(device)
 
+        val ui = UsbPermissionActivityProbe.inspect(appContext)
+        if (ui.state != UsbPermissionActivityProbe.State.UNKNOWN) {
+            runCatching { onDiagnostic(ui.diagnostic()) }
+        }
+        if (ui.state == UsbPermissionActivityProbe.State.UNAVAILABLE) {
+            if (allowAdbFallback && IphoneUsbAdbGrant.supported()) {
+                return PermissionRequest.AdbRequired(device)
+            }
+        }
         usbManager.requestPermission(device, permissionPendingIntent())
-        return PermissionRequest.Requested(device)
+        return PermissionRequest.Requested(
+            device,
+            afterMissingUiAdbFailure = ui.state == UsbPermissionActivityProbe.State.UNAVAILABLE,
+        )
     }
 
     /** Returns null for unrelated broadcasts, malformed results, or non-configured devices. */
@@ -242,7 +265,7 @@ class IphoneUsbHost(
         if (!usbManager.hasPermission(device)) {
             throw IphoneUsbException.PermissionDenied("USB permission has not been granted")
         }
-        val connection = usbManager.openDevice(device)
+        var connection = usbManager.openDevice(device)
             ?: throw IphoneUsbException.DeviceUnavailable("UsbManager could not open the iPhone")
         var claimedInterface: UsbInterface? = null
         try {
@@ -250,7 +273,7 @@ class IphoneUsbHost(
                 ?: throw IphoneUsbException.Protocol(
                     "Re-enumerated iPhone exposes no USBMUX CarPlay configuration",
                 )
-            selectConfiguration(connection, device, configuration)
+            connection = selectConfiguration(connection, device, configuration)
             val usbMux = IphoneCarPlayConfiguration.usbMuxInterface(configuration)
                 ?: throw IphoneUsbException.Protocol("CarPlay configuration exposes no USBMUX interface")
             val endpoints = IphoneCarPlayConfiguration.usbMuxEndpoints(usbMux)
@@ -290,48 +313,63 @@ class IphoneUsbHost(
     private fun claim(connection: UsbDeviceConnection, iface: UsbInterface): Boolean =
         diagnosticClaim?.invoke(connection, iface) ?: connection.claimInterface(iface, true)
 
-    /** Selects [configuration], detaching head-unit drivers that block the switch (#518). */
-    private fun selectConfiguration(connection: UsbDeviceConnection, device: UsbDevice, configuration: UsbConfiguration) {
+    /** Returns the live connection; detaching kernel drivers may close and replace it. */
+    private fun selectConfiguration(
+        connection: UsbDeviceConnection,
+        device: UsbDevice,
+        configuration: UsbConfiguration,
+    ): UsbDeviceConnection {
         val interfaces = (0 until device.configurationCount).map(device::getConfiguration)
             .flatMap { config -> (0 until config.interfaceCount).map(config::getInterface) }
             .associateBy { it.id }
-        val outcome = UsbConfigurationSelection.select(
-            target = configuration.id,
-            interfaceIds = interfaces.keys.toList(),
-            setConfiguration = { diagnosticSetConfiguration?.invoke(connection, configuration) ?: connection.setConfiguration(configuration) },
-            activeConfiguration = { UsbVerdict.readActiveConfiguration(connection) },
-            // A forced claim detaches the kernel driver; the release leaves the interface unbound.
-            detach = { id ->
-                val usbInterface = interfaces.getValue(id)
-                claim(connection, usbInterface).also { if (it) connection.releaseInterface(usbInterface) }
-            },
-        )
-        if (outcome == null) {
-            UsbSessionDiagnostics.recordAttempt("USB configuration select target=${configuration.id} ok=true")
-            return
-        }
-        UsbSessionDiagnostics.recordAttempt(outcome.diagnostic())
-        UsbVerdict.captureSnapshot(device)?.let { UsbSessionDiagnostics.recordSnapshot(it.summary()) }
-        runCatching { onDiagnostic(outcome.diagnostic()) }
-        if (outcome.wrongConfiguration) {
-            val verdict = UsbVerdict.forUsbFailure(
-                device = device,
-                connection = connection,
-                claimInterfaceId = null,
-                targetConfiguration = configuration.id,
-                switchSucceeded = outcome.selected,
-                detachAttempted = outcome.detachAttempted,
-                detachFailures = outcome.detachFailed,
+        var current = connection
+        try {
+            val outcome = UsbConfigurationSelection.select(
+                target = configuration.id,
+                interfaceIds = interfaces.keys.toList(),
+                setConfiguration = {
+                    diagnosticSetConfiguration?.invoke(current, configuration) ?: current.setConfiguration(configuration)
+                },
+                activeConfiguration = { UsbVerdict.readActiveConfiguration(current) },
+                // Keep claims held until close: releaseInterface() would reattach kernel drivers.
+                detach = { id -> claim(current, interfaces.getValue(id)) },
+                reopen = {
+                    current.close()
+                    current = usbManager.openDevice(device)
+                        ?: throw IphoneUsbException.DeviceUnavailable("UsbManager could not reopen the iPhone")
+                },
             )
-            UsbSessionDiagnostics.recordVerdict(verdict)
-            runCatching { onDiagnostic(verdict.line) }
-            throw IphoneUsbException.DeviceUnavailable(
-                "Android could not switch the iPhone to USB configuration ${configuration.id} " +
-                    "(still ${outcome.after}); ${verdict.line}",
-            )
-        }
-        if (!outcome.selected) {
-            Log.w(IphoneCarPlayConfiguration.TAG, "setConfiguration ${configuration.id} reported failure; claiming anyway")
+            if (outcome == null) {
+                UsbSessionDiagnostics.recordAttempt("USB configuration select target=${configuration.id} ok=true")
+                return current
+            }
+            UsbSessionDiagnostics.recordAttempt(outcome.diagnostic())
+            UsbVerdict.captureSnapshot(device)?.let { UsbSessionDiagnostics.recordSnapshot(it.summary()) }
+            runCatching { onDiagnostic(outcome.diagnostic()) }
+            if (outcome.wrongConfiguration) {
+                val verdict = UsbVerdict.forUsbFailure(
+                    device = device,
+                    connection = current,
+                    claimInterfaceId = null,
+                    targetConfiguration = configuration.id,
+                    switchSucceeded = outcome.selected,
+                    detachAttempted = outcome.detachAttempted,
+                    detachFailures = outcome.detachFailed,
+                )
+                UsbSessionDiagnostics.recordVerdict(verdict)
+                runCatching { onDiagnostic(verdict.line) }
+                throw IphoneUsbException.DeviceUnavailable(
+                    "Android could not switch the iPhone to USB configuration ${configuration.id} " +
+                        "(still ${outcome.after}); ${verdict.line}",
+                )
+            }
+            if (!outcome.selected) {
+                Log.w(IphoneCarPlayConfiguration.TAG, "setConfiguration ${configuration.id} reported failure; claiming anyway")
+            }
+            return current
+        } catch (error: Throwable) {
+            if (current !== connection) current.close()
+            throw error
         }
     }
 

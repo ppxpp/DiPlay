@@ -36,6 +36,8 @@ data class AirPlayDisplayConfig(
      * the video stream to fill the entire display as right angles without requiring additional clipping.
      */
     val mainDisplayCornerMasks: Boolean? = null,
+    /** Separately opt into iOS's genuine corner-mask PNG stream (not the old square-corner mode). */
+    val useIphoneCornerMask: Boolean = false,
     /** When true, do not declare safeArea in viewAreas dictionary to avoid conflict with cornerMasks. */
     val mainDisplayDisableSafeArea: Boolean = (mainDisplayCornerMasks == true),
 )
@@ -69,9 +71,7 @@ data class AirPlayConfig(
     val main: AirPlayDisplayConfig,
     val cluster: AirPlayDisplayConfig? = null,
     val rightHandDrive: Boolean = false,
-    // Pioneer head unit firewall (carnetserver) only lets inbound new TCP reach 9911/9912/5656/8721;
-    // 5656 is already held by the car, so advertise the bound port from the 8721 side instead of 7000.
-    val port: Int = 8721,
+    val port: Int = 7000,
     val entertainmentSampleRate: Int = 48000,
     val hevc: Boolean = false,
     val disableAudioOutput: Boolean = false,

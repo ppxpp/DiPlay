@@ -46,6 +46,8 @@ class NcmUsbBridge internal constructor(
     private var readQueuedSession = 0L
     private var readQueuedNs = 0L
     private val frameTimes = ArrayDeque<Long>()
+    private var bulkOutAccepted = false
+    private var notReadyFrames = 0
     private val frames = ArrayDeque<ByteArray>()
     private var queuedBytes = 0
     private var buffered = ByteArray(0)
@@ -97,11 +99,15 @@ class NcmUsbBridge internal constructor(
         val block = Ntb16Codec.buildBatch(frames, seq)
         val writing = System.nanoTime()
         val native = com.shilapi.xcertplay.pioneer.PioneerUsbPolicy.matchesDevice()
+        // Framework bulkTransfer pins the heap during a NAK; keep upstream's short startup wait.
+        // The Pioneer native path copies first and retains its validated caller timeout.
+        val writeTimeout = if (!native && !bulkOutAccepted)
+            minOf(timeoutMillis, NOT_READY_WRITE_TIMEOUT_MILLIS) else timeoutMillis
         val detail = if (native && com.shilapi.xcertplay.pioneer.PioneerDiagnostics.enabled)
-            com.shilapi.xcertplay.pioneer.PioneerUsbNative.bulkWriteMeasured(connection.fileDescriptor, outEndpoint.address, block, timeoutMillis) else null
+            com.shilapi.xcertplay.pioneer.PioneerUsbNative.bulkWriteMeasured(connection.fileDescriptor, outEndpoint.address, block, writeTimeout) else null
         val transferred = detail?.get(0)?.toInt() ?: if (native)
-            com.shilapi.xcertplay.pioneer.PioneerUsbNative.bulkWrite(connection.fileDescriptor, outEndpoint.address, block, timeoutMillis)
-        else connection.bulkTransfer(outEndpoint, block, block.size, timeoutMillis)
+            com.shilapi.xcertplay.pioneer.PioneerUsbNative.bulkWrite(connection.fileDescriptor, outEndpoint.address, block, writeTimeout)
+        else connection.bulkTransfer(outEndpoint, block, block.size, writeTimeout)
         val classification = when {
             transferred == block.size -> WriteFailure.NONE
             transferred > 0 -> WriteFailure.PARTIAL
@@ -111,8 +117,24 @@ class NcmUsbBridge internal constructor(
             transferred == -12 -> WriteFailure.MEMORY
             else -> WriteFailure.UNKNOWN // Android -1 does not expose errno.
         }
-        if (writeDiagnosticBudget-- > 0) runCatching { onDiagnostic(
-            "NCM_TX transferred=$transferred expected=${block.size} frames=${frames.size} frameBytes=${frames.sumOf { it.size }} timeoutMs=$timeoutMillis failure=$classification") }
+        if (transferred <= 0) {
+            if (!bulkOutAccepted) notReadyFrames += frames.size
+            if (!loggedWriteTimeout) {
+                loggedWriteTimeout = true
+                Log.i(IphoneCarPlayConfiguration.TAG, "ncm bulk-out not ready; retaining bridge for retry")
+            }
+        } else {
+            if (!bulkOutAccepted) {
+                bulkOutAccepted = true
+                runCatching { onDiagnostic("NCM bulk-out ready after $notReadyFrames unaccepted frames") }
+            }
+            if (loggedWriteTimeout) {
+                loggedWriteTimeout = false
+                Log.i(IphoneCarPlayConfiguration.TAG, "ncm bulk-out became ready")
+            }
+        }
+        if (native && writeDiagnosticBudget-- > 0) runCatching { onDiagnostic(
+            "NCM_TX transferred=$transferred expected=${block.size} frames=${frames.size} frameBytes=${frames.sumOf { it.size }} timeoutMs=$writeTimeout failure=$classification") }
         WriteResult(transferred, block.size, classification, writing - started, System.nanoTime() - writing, detail?.get(1) ?: 0, detail?.get(2) ?: 0)
     }
     /** Only the OUT endpoint; caller serializes with the single USB writer. */
@@ -466,6 +488,7 @@ class NcmUsbBridge internal constructor(
         private const val USB_SETUP_RETRY_MILLIS = 100L
         private const val STATUS_POLL_TIMEOUT_MILLIS = 20
         private const val STATUS_POLL_INTERVAL_MILLIS = 500L
+        internal const val NOT_READY_WRITE_TIMEOUT_MILLIS = 20
         private const val MAX_QUEUED_FRAMES = 256
         private const val MAX_QUEUED_BYTES = 1 shl 20
         private const val NANOS_PER_MILLISECOND = 1_000_000L

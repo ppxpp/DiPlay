@@ -12,9 +12,20 @@ The media channel supplies energy from successful PCM writes. Only level and fra
 
 The opt-in card is in Settings → Advanced and is marked experimental. Changes apply live after saving; Cancel leaves the saved configuration unchanged.
 
-Available modes are sound energy, beat, estimated BPM, bass priority and smart follow. BPM is an estimate from recent onsets, not track metadata. Selected OEM color numbers form the palette. Brightness transition speed affects brightness smoothing; color beat detection keeps its standard cadence. The configured brightness is a ceiling. Setting 0 means raw OEM level 1, the lowest supported level, not confirmed physical power off.
+Available modes are sound energy, beat, estimated BPM, bass priority and smart follow. BPM is an estimate from recent onsets, not track metadata. Selected OEM color numbers form the palette. Brightness transition speed affects brightness smoothing; color beat detection keeps its standard cadence. The configured brightness is a ceiling. Setting 0 means raw OEM level 1, the lowest supported level. On a 2023 Han (GCC, DiLink 3.0) that level switches the lamps fully off, observed by stepping all zones through levels 1, 2, 3 and 6; other models may differ.
 
-With control enabled, paused or disconnected playback holds all zones at the lowest level. During playback, disabling music following uses a fixed color and brightness. Disabling ambient control attempts to restore the pre-control front/rear colors, brightness and area. Changing the configuration takes effect only after Save; Cancel does not apply the draft.
+With control enabled, **When no music is playing** decides what paused, stopped or disconnected playback does. **Steady glow** (the default) holds the chosen color at the chosen level. **Car's own lighting** keeps the steady glow through short pauses and track changes, then hands the lamps back to the car's own settings after 15 seconds without music; the next track starts a new lamp session. **Lowest level** holds every zone at raw level 1, which is dark on a Han. During playback, disabling music following uses a fixed color and brightness. Disabling ambient control attempts to restore the pre-control front/rear colors, brightness and area. Changing the configuration takes effect only after Save; Cancel does not apply the draft.
+
+## Settings dialog
+
+The dialog opens with a **What happens** summary that rewrites itself as the draft changes, so each setting's effect is visible before saving. It follows the controller rules above:
+
+- Control off: the car keeps its own lamp colors, brightness and area.
+- Music playing: the chosen area (Front, Rear or All) follows the music, or holds one fixed color, up to the chosen level. With Front or Rear selected, the other zone is not changed.
+- Paused, stopped or disconnected: steady glow, the car's own lighting after 15 seconds, or the lowest level, as chosen. Steady glow and the lowest level apply to the chosen area (the lowest level to every zone).
+- Level 0: every zone stays at the lowest level while music plays; with the car's own lighting chosen the lamps are still handed back after 15 seconds without music.
+
+Colors are picked from a grid of the car's 31 colors, drawn with the 31-color OEM preview reference described below; the lamp interface accepts color numbers, not arbitrary RGB, so there is no free color wheel. With **Follow music** on, any number of colors can be selected (at least one). With it off, the grid selects a single color, the first of any previous selection, as the lamps use it. With **Follow album cover** on, the grid is disabled because the cover decides the colors. Each color-change mode has a one-line description, and brightness is a 0 to 6 slider. The color-change mode and brightness-speed controls are hidden while Follow music is off, because fixed mode does not use them.
 
 The controller samples every 50 ms and limits lamp submissions to one per 200 ms. Lamp calls run outside audio writes through a token-bound, bounded stdin worker. The worker accepts only interior-lamp operations. It holds a process lock, reads back writes, keeps one original-state snapshot and restores on normal stop or EOF. A five-second heartbeat and fifteen-second lease attempt restoration after a lost connection. Recovery uses bounded retry delays and retains the original snapshot when a stop is unconfirmed.
 
