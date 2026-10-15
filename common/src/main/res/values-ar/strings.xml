@@ -606,8 +606,8 @@
     <string name="settings_usb_charging">شحن iPhone</string>
     <string name="settings_usb_charging_normal">عادي (2.4 A)</string>
     <string name="settings_usb_charging_reduced">مخفّض (1.5 A)</string>
-    <string name="settings_usb_charging_low">منخفض (0.5 A)</string>
-    <string name="settings_usb_charging_description">تيار الشحن الذي يسمح DiPlay لجهاز iPhone بسحبه عبر USB. إذا انقطع CarPlay السلكي كل بضع ثوانٍ وأعاد iPhone الاتصال من تلقاء نفسه، فقد لا يوفّر منفذ USB في السيارة طاقة كافية: جرّب «مخفّض» ثم «منخفض». يصبح شحن iPhone أبطأ. يُطبَّق عند اتصال USB التالي.</string>
+    <string name="settings_usb_charging_low">منخفض (0.5 A، افتراضي)</string>
+    <string name="settings_usb_charging_description">تيار الشحن الذي يقدّمه DiPlay لجهاز iPhone عبر USB. القيمة الافتراضية 0.5 A؛ ويمكن اختيار 1.5 A أو 2.4 A حسب قدرة مصدر طاقة USB. يُطبَّق عند اتصال USB التالي.</string>
     <string name="wheel_joystick_auto_off">عصا التحكم تتوقف تلقائيًا</string>
     <string name="wheel_joystick_auto_off_description">بعد 15 ثانية دون ضغط، وعند بدء مسار، تعود الأزرار إلى التحكم في الموسيقى والصوت.</string>
     <string name="wheel_joystick_on">عصا التحكم مفعّلة</string>
@@ -798,4 +798,5 @@
     <string name="bluetooth_connections_not_real">يُبلغ بلوتوث Android في وحدة القيادة هذه عن اتصال، لكن لا شيء يصل إلى iPhone: حتى الاتصال بخدمة غير موجودة ينجح. البلوتوث هنا يديره مكوّن خاص بالشركة المصنّعة لا تستطيع التطبيقات استخدامه، لذلك لا يمكن أن يعمل CarPlay اللاسلكي على وحدة القيادة هذه. جرّب اتصال USB.</string>
     <string name="settings_fce_cluster_guidance">الإرشاد في عدادات FCE (تجريبي)</string>
     <string name="settings_fce_cluster_guidance_description">يعرض أسهم CarPlay ومسافة المنعطف التالي في واجهة الملاحة بلوحة العدادات على وحدات FCE، عبر الكتابة إلى خدمة المركبة في الوحدة. جُرّب على سيارة واحدة فقط؛ أوقفه إذا تصرفت لوحة العدادات بشكل غير متوقع.</string>
+    <string name="settings_pioneer_lan_debug">تصحيح الأخطاء عبر الشبكة المحلية</string>
 </resources>

@@ -64,6 +64,8 @@ class CarPlayVpnService : VpnService() {
     private var serverSocket: ServerSocket? = null
     private var additionalServers: List<ServerSocket> = emptyList()
     private var bridge: Ipv6NcmBridge? = null
+    private var lwipBridge: PioneerLwipBridge? = null
+    private var lwipControlPort: java.io.Closeable? = null
     private var tun: ParcelFileDescriptor? = null
     private var attachGeneration = 0
 
@@ -98,12 +100,35 @@ class CarPlayVpnService : VpnService() {
             }
             require(hostMac.size == 6) { "hostMac must be 6 bytes" }
 
+            if (com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.enabled(this)) {
+                val rawBridge = PioneerLwipBridge(ncm, hostMac, address.address,
+                    diagnosticPath = java.io.File(filesDir, "pioneer-debug/lwip-native.log").absolutePath,
+                    log = { listener.onDebugLog(it) },
+                    onError = { onTransportError(generation, listener, it) })
+                lwipBridge = rawBridge
+                rawBridge.start()
+                startAirPlayServer(generation, AirPlayAttachment(
+                    InetAddress.getByName("127.0.0.1"), config.copy(port = 7000, pinInboundPorts = false),
+                    identity, pairings, mfi, listener, media))
+                val port = requireNotNull(boundPort())
+                lwipControlPort = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.registerPort(port, false)
+                com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.controlPort = port
+                listener.onDebugLog("LWIP_NETWORK_ATTACHED no TUN; AirPlay via loopback port=${boundPort()}")
+                return AttachResult.Started
+            }
+
             val tunFd = Builder()
                 .addAddress(linkLocal, LINK_PREFIX)
                 .addRoute(LINK_LOCAL_ROUTE, LINK_PREFIX)
                 .setSession(SESSION_NAME)
                 .setMtu(TUN_MTU)
                 .setBlocking(true)
+                .apply {
+                    // The IPv6-only CarPlay VPN otherwise blocks this app's IPv4 LAN debug sockets.
+                    if (com.shilapi.xcertplay.pioneer.PioneerUsbPolicy.matchesDevice() ||
+                        com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.port > 0)
+                        allowFamily(android.system.OsConstants.AF_INET)
+                }
                 // An empty app list routes every UID through this VPN. Scope it before establish;
                 // rejection must reach the existing attachment cleanup, never an unscoped retry.
                 .addAllowedApplication(packageName)
@@ -111,15 +136,19 @@ class CarPlayVpnService : VpnService() {
                 ?: throw IOException("VpnService.establish returned null")
             tun = tunFd
 
-            val ipv6Bridge = Ipv6NcmBridge(ncm, tunFd, hostMac) { error ->
-                onTransportError(generation, listener, error)
-            }
+            val ipv6Bridge = Ipv6NcmBridge(ncm, tunFd, hostMac,
+                onError = { error -> onTransportError(generation, listener, error) },
+                onDiagnostic = { message -> listener.onDebugLog(message) },
+                neighborAddress = if (com.shilapi.xcertplay.pioneer.PioneerUsbPolicy.enabled(this)) address.address else null,
+            )
             ipv6Bridge.start()
             bridge = ipv6Bridge
 
             startAirPlayServer(
                 generation,
-                AirPlayAttachment(scopedToTunnel(address, listener), config, identity, pairings, mfi, listener, media),
+                AirPlayAttachment(scopedToTunnel(address, listener),
+                    if (com.shilapi.xcertplay.pioneer.PioneerUsbPolicy.enabled(this)) config.copy(port = 9911) else config,
+                    identity, pairings, mfi, listener, media),
             )
             AttachResult.Started
         } catch (error: Exception) {
@@ -270,6 +299,11 @@ class CarPlayVpnService : VpnService() {
                         socket.close()
                         return
                     }
+                    if (server === serverSocket && lwipBridge != null && socket.inetAddress.hostAddress == "127.0.0.2") {
+                        val runtime = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime
+                        runtime.tcpAccepted = true
+                        runtime.milestone(runtime.sessionId, "airplay-control-accepted")?.let(current.listener::onDebugLog)
+                    }
                     val internalPeer = isInternalAirPlayPeer(socket.inetAddress, socket.localAddress)
                     current.listenerIdentity?.let { owner ->
                         current.listener.onTcpAccepted(AirPlayTcpAccepted(
@@ -377,6 +411,9 @@ class CarPlayVpnService : VpnService() {
         additionalServers.forEach { it.close() }
         additionalServers = emptyList()
         closeSessionsLocked()
+        lwipControlPort?.close(); lwipControlPort = null
+        lwipBridge?.close()
+        lwipBridge = null
         bridge?.close()
         bridge = null
         tun?.close()

@@ -45,9 +45,8 @@ internal class UsbRequestQueue(private val connection: UsbDeviceConnection, thre
             reaper!!.await(timeoutMillis)
         }
 
-    override fun close() {
-        reaper?.close()
-    }
+    override fun close() { reaper?.close() }
+    fun awaitStopped(timeoutMillis: Long): Boolean = reaper?.awaitStopped(timeoutMillis) ?: true
 }
 
 /**
@@ -95,6 +94,12 @@ internal class UsbCompletionReaper<T : Any>(
     override fun close() = synchronized(lock) {
         closed = true
         lock.notifyAll()
+    }
+
+    fun awaitStopped(timeoutMillis: Long): Boolean {
+        val current = synchronized(lock) { thread }
+        if (current !== Thread.currentThread()) current?.join(timeoutMillis)
+        return current?.isAlive != true
     }
 
     private fun reapLoop() {

@@ -16,7 +16,9 @@ import com.shilapi.xcertplay.transport.RemoteGatewayDiscovery
 
 /** Native first-pairing and discovery entry point; it does not open RFCOMM during discovery. */
 class GatewayDeviceActivity : Activity() {
+    private lateinit var transportStatus: TextView
     private lateinit var status: TextView
+    private lateinit var ports: TextView
     private lateinit var searchButton: Button
     private lateinit var connectButton: Button
     private var endpoint: RemoteGatewayDiscovery.Endpoint? = null
@@ -32,14 +34,22 @@ class GatewayDeviceActivity : Activity() {
         }
         content.addView(TextView(this).apply { setText(R.string.gateway_title); textSize = 26f })
         content.addView(TextView(this).apply { setText(R.string.gateway_description); textSize = 16f })
+        transportStatus = TextView(this).apply { textSize = 16f }
+        content.addView(transportStatus)
+        updateTransportStatus()
         status = TextView(this).apply { textSize = 18f; setPadding(0, dp(24), 0, dp(24)) }
         content.addView(status)
+        ports = TextView(this).apply { textSize = 14f; setPadding(0, 0, 0, dp(16)) }
+        content.addView(ports)
         fun button(text: Int, click: () -> Unit) = Button(this).apply {
             setText(text); setOnClickListener { click() }
             content.addView(this, LinearLayout.LayoutParams(-1, -2))
         }
-        searchButton = button(if (RemoteRfcommProtocol.DEVELOPMENT_DIRECT_CONNECTION)
-            R.string.gateway_check_connection else R.string.gateway_search) { search() }
+        button(R.string.gateway_use_local_bluetooth) {
+            RemoteGatewaySettings.useLocalBluetooth(this)
+            updateTransportStatus()
+        }
+        searchButton = button(R.string.gateway_search) { search() }
         connectButton = button(R.string.gateway_connect) { connect() }.apply { isEnabled = false }
         button(R.string.gateway_forget) {
             AlertDialog.Builder(this).setTitle(R.string.gateway_forget)
@@ -47,6 +57,7 @@ class GatewayDeviceActivity : Activity() {
                 .setNegativeButton(android.R.string.cancel, null)
                 .setPositiveButton(android.R.string.ok) { _, _ ->
                     RemoteGatewaySettings.forget(this)
+                    updateTransportStatus()
                     endpoint = null
                     search()
                 }.show()
@@ -73,6 +84,7 @@ class GatewayDeviceActivity : Activity() {
         searchButton.isEnabled = false
         connectButton.isEnabled = false
         status.setText(R.string.gateway_searching)
+        ports.text = ""
         val paired = RemoteGatewaySettings.load(this)
         Thread({
             val discoveryReport = java.io.File(filesDir, "gateway-discovery.log")
@@ -84,8 +96,6 @@ class GatewayDeviceActivity : Activity() {
             val result = runCatching {
                 RemoteGatewayDiscovery.find(this, paired?.gatewayBluetoothMac) { message ->
                     trace(message)
-                }.also { found ->
-                    RemoteGatewaySettings.save(this, found.gatewayBluetoothMac, RemoteRfcommProtocol.DEVELOPMENT_TOKEN)
                 }
             }
             runOnUiThread {
@@ -94,18 +104,19 @@ class GatewayDeviceActivity : Activity() {
                 searchButton.isEnabled = true
                 result.onSuccess { found ->
                     endpoint = found
-                    status.text = if (RemoteRfcommProtocol.DEVELOPMENT_DIRECT_CONNECTION) {
-                        getString(R.string.gateway_direct_connected, found.host, found.port)
-                    } else getString(R.string.gateway_found_paired, found.gatewayBluetoothMac.takeLast(5))
+                    status.text = getString(R.string.gateway_found_paired, found.gatewayBluetoothMac.takeLast(5))
+                    ports.text = if (found.discoveryLocalPort > 0) {
+                        getString(R.string.gateway_ports_broadcast, found.discoveryLocalPort,
+                            RemoteRfcommProtocol.DISCOVERY_PORT, found.host, found.port)
+                    } else {
+                        getString(R.string.gateway_ports_nsd, found.host, found.port)
+                    }
                     connectButton.setText(R.string.gateway_connect)
                     connectButton.isEnabled = true
                 }.onFailure {
                     android.util.Log.e("GatewayDiscovery", "Proxy discovery failed", it)
                     trace("Proxy discovery failed: ${it.javaClass.simpleName}: ${it.message}")
-                    status.text = if (RemoteRfcommProtocol.DEVELOPMENT_DIRECT_CONNECTION) {
-                        getString(R.string.gateway_direct_failed, RemoteRfcommProtocol.DEVELOPMENT_PROXY_HOST,
-                            RemoteRfcommProtocol.DEVELOPMENT_PROXY_PORT, it.message ?: it.javaClass.simpleName)
-                    } else getString(R.string.gateway_not_found)
+                    status.text = getString(R.string.gateway_not_found)
                 }
             }
         }, "gateway-ui-discovery").start()
@@ -113,17 +124,27 @@ class GatewayDeviceActivity : Activity() {
 
     private fun connect() {
         val found = endpoint ?: return
-        if (RemoteGatewaySettings.load(this) == null) {
-            RemoteGatewaySettings.save(this, found.gatewayBluetoothMac, RemoteRfcommProtocol.DEVELOPMENT_TOKEN)
-        }
         if (AirPlayPersistence.loadExistingWifiSsid(this).isBlank()) {
             status.setText(R.string.gateway_wifi_required)
             return
         }
+        RemoteGatewaySettings.save(this, found.gatewayBluetoothMac, RemoteRfcommProtocol.DEVELOPMENT_TOKEN)
         AirPlayPersistence.saveWirelessHotspotMode(this, WirelessHotspotMode.EXISTING_WIFI)
+        updateTransportStatus()
         AirPlayPersistence.saveWirelessEnabled(this, true)
         AirPlayPersistence.saveMfiTarget(this, MfiTarget.LOCAL)
-        startActivity(Intent(this, CarPlayHostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+        connectButton.isEnabled = false
+        CarPlayBackgroundSession.stop {
+            runOnUiThread {
+                if (!destroyed) startActivity(Intent(this, CarPlayHostActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+            }
+        }
+    }
+
+    private fun updateTransportStatus() {
+        transportStatus.setText(if (RemoteGatewaySettings.loadSelected(this) != null)
+            R.string.gateway_transport_proxy else R.string.gateway_transport_local)
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()

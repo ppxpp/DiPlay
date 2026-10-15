@@ -23,6 +23,8 @@ class Ipv6NcmBridge(
     private val ncm: NcmUsbBridge,
     private val tun: ParcelFileDescriptor,
     private val hostMac: ByteArray,
+    private val onDiagnostic: (String) -> Unit = {},
+    private val neighborAddress: ByteArray? = null,
     private val onError: (Throwable) -> Unit,
 ) : Closeable {
     init {
@@ -35,6 +37,7 @@ class Ipv6NcmBridge(
     private var loggedOutbound = false
     private var loggedWaitingForPeer = false
     private var inboundLogBudget = 16
+    private var inboundTcpLogBudget = 16
     private var outboundLogBudget = 24
     private val running = AtomicBoolean(false)
     private lateinit var ncmToTunThread: Thread
@@ -67,17 +70,26 @@ class Ipv6NcmBridge(
                 val frame = ncm.recv(READ_TIMEOUT_MILLIS) ?: continue
                 val ipv6 = EthernetIpv6Codec.parseIpv6View(frame) ?: continue
                 peerMac = ipv6.sourceMac
+                val neighborReply = neighborAddress?.let { PioneerNcmNeighborDiscovery.reply(frame, it, hostMac) }
+                if (neighborReply != null) {
+                    ncm.send(neighborReply, WRITE_TIMEOUT_MILLIS)
+                    diagnostic("PIONEER_NDP_REPLY neighbor advertisement submitted bytes=${neighborReply.size}")
+                    continue
+                }
                 if (!loggedInbound) {
                     loggedInbound = true
-                    Log.i(
-                        TAG,
+                    diagnostic(
                         "ncm first inbound ipv6 bytes=${ipv6.payloadLength} " +
                             "peer=${ipv6.sourceMac.macString()}",
                     )
                 }
                 if (inboundLogBudget > 0) {
                     inboundLogBudget--
-                    Log.i(TAG, "ncm inbound ${frame.summary(ipv6.payloadOffset)}")
+                    diagnostic("ncm inbound ${frame.summary(ipv6.payloadOffset)}")
+                }
+                if (ipv6.payloadLength >= 60 && frame[ipv6.payloadOffset + 6].toInt() and 255 == 6 && inboundTcpLogBudget > 0) {
+                    inboundTcpLogBudget--
+                    diagnostic("NCM_TCP ${frame.summary(ipv6.payloadOffset)} flags=0x${(frame[ipv6.payloadOffset + 53].toInt() and 255).toString(16)}")
                 }
                 output.write(frame, ipv6.payloadOffset, ipv6.payloadLength)
             }
@@ -107,25 +119,24 @@ class Ipv6NcmBridge(
                 val tunPacket = buffer.copyOf(length)
                 val ipv6 = EthernetIpv6Codec.addNeighborAdvertisementTargetMac(tunPacket, hostMac)
                 if (ipv6.size != tunPacket.size) {
-                    Log.i(TAG, "ncm added target-link-layer option to neighbor advertisement")
+                    diagnostic("ncm added target-link-layer option to neighbor advertisement")
                 }
                 if (outboundLogBudget > 0) {
                     outboundLogBudget--
-                    Log.i(TAG, "ncm outbound ${ipv6.summary(0)}")
+                    diagnostic("ncm outbound ${ipv6.summary(0)}")
                 }
                 val multicastMac = EthernetIpv6Codec.multicastDestinationMac(ipv6)
                 val mac = multicastMac ?: peerMac
                 if (mac == null) {
                     if (!loggedWaitingForPeer) {
                         loggedWaitingForPeer = true
-                        Log.i(TAG, "ncm deferred outbound unicast bytes=$length until peer MAC is learned")
+                        diagnostic("ncm deferred outbound unicast bytes=$length until peer MAC is learned")
                     }
                     continue
                 }
                 if (!loggedOutbound) {
                     loggedOutbound = true
-                    Log.i(
-                        TAG,
+                    diagnostic(
                         "ncm first outbound ipv6 bytes=$length destination=${mac.macString()} multicast=${multicastMac != null}",
                     )
                 }
@@ -147,6 +158,11 @@ class Ipv6NcmBridge(
             Thread.currentThread().interrupt()
         }
         if (thread.isAlive) thread.interrupt()
+    }
+
+    private fun diagnostic(message: String) {
+        Log.i(TAG, message)
+        runCatching { onDiagnostic(message) }
     }
 
     private fun ByteArray.macString(): String =

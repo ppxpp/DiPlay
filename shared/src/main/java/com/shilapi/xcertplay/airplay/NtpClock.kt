@@ -22,6 +22,8 @@ class NtpClock(
     /** The control connection's local address; its family picks the listener's wildcard. */
     private val bindAddress: InetAddress? = null,
 ) : Closeable {
+    private val lwipSession = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.sessionId
+    private var portLease: Closeable? = null
     private val running = AtomicBoolean(false)
     private val socketLock = Any()
     private val clockLock = Any()
@@ -44,12 +46,15 @@ class NtpClock(
         check(!running.getAndSet(true)) { "NtpClock is already running" }
         val bound = CarFirewallPorts.udpSocket(bindAddress, preferredPorts)
         synchronized(socketLock) { socket = bound }
+        try { portLease = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.registerPort(bound.localPort, true, lwipSession) }
+        catch (error: Throwable) { close(); throw error }
         receiver = Thread(::runReceiver, "airplay-ntp-rx").apply { isDaemon = true; start() }
         return bound.localPort
     }
 
     fun start(peerAddress: InetAddress, port: Int) {
         require(port > 0) { "timing port must be positive" }
+        com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.registerPeerUdp(peerAddress, port, lwipSession)
         peer = InetSocketAddress(peerAddress, port)
         sender = Thread(::runSender, "airplay-ntp-tx").apply { isDaemon = true; start() }
     }
@@ -65,6 +70,7 @@ class NtpClock(
             socket?.close()
             socket = null
         }
+        portLease?.close(); portLease = null
         sender?.interrupt()
         receiver?.interrupt()
     }

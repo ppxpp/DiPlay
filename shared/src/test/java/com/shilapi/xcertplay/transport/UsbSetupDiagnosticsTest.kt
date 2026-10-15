@@ -52,7 +52,7 @@ class UsbSetupDiagnosticsTest {
         }, { active }) { detached += it; it != 3 }
         assertEquals(listOf(0, 1, 2, 3), detached)
         assertEquals(
-            "USB configuration select target=6 ok=true before=2 detached=0,1,2 after=6",
+            "USB configuration select target=6 ok=true before=2 detached=0,1,2 detachFailed=3 after=6",
             outcome?.diagnostic(),
         )
         assertFalse(outcome!!.wrongConfiguration)
@@ -62,7 +62,10 @@ class UsbSetupDiagnosticsTest {
     fun configurationSwitchReportsADriverItCouldNotMove() {
         val stuck = UsbConfigurationSelection.select(6, listOf(0), { false }, { 2 }) { false }
         assertTrue(stuck!!.wrongConfiguration)
-        assertEquals("USB configuration select target=6 ok=false before=2 detached=none after=2", stuck.diagnostic())
+        assertEquals(
+            "USB configuration select target=6 ok=false before=2 detached=none detachFailed=0 after=2",
+            stuck.diagnostic(),
+        )
 
         // Already in configuration 6: the forced claims later detach cdc_ncm; nothing to switch here.
         val detached = mutableListOf<Int>()

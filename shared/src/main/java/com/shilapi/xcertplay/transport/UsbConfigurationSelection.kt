@@ -18,13 +18,18 @@ internal object UsbConfigurationSelection {
         val before: Int?,
         val after: Int?,
         val detached: List<Int>,
+        val detachFailed: List<Int> = emptyList(),
     ) {
         /** Android reported the switch as failed and the iPhone still reads another configuration. */
         val wrongConfiguration: Boolean get() = !selected && after != null && after != target
 
+        /** True when the retry path ran the forced-claim sweep, whether or not it moved every driver. */
+        val detachAttempted: Boolean get() = detached.isNotEmpty() || detachFailed.isNotEmpty()
+
         fun diagnostic(): String =
             "USB configuration select target=$target ok=$selected before=${before ?: "unknown"} " +
-                "detached=${detached.joinToString(",").ifEmpty { "none" }} after=${after ?: "unknown"}"
+                "detached=${detached.joinToString(",").ifEmpty { "none" }} " +
+                "detachFailed=${detachFailed.joinToString(",").ifEmpty { "none" }} after=${after ?: "unknown"}"
     }
 
     /**
@@ -41,8 +46,8 @@ internal object UsbConfigurationSelection {
         if (setConfiguration()) return null
         val before = activeConfiguration()
         if (before == target) return Outcome(target, selected = false, before, before, emptyList())
-        val detached = interfaceIds.distinct().sorted().filter(detach)
+        val (detached, detachFailed) = interfaceIds.distinct().sorted().partition(detach)
         val selected = setConfiguration()
-        return Outcome(target, selected, before, activeConfiguration(), detached)
+        return Outcome(target, selected, before, activeConfiguration(), detached, detachFailed)
     }
 }

@@ -39,6 +39,9 @@ internal class BufferedAudioStream(
     @Volatile internal var outputCleanupComplete = false
         private set
     private val server = ServerSocket(0)
+    private val portLease = try {
+        com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.registerPort(server.localPort, false)
+    } catch (error: Throwable) { server.close(); throw error }
     private val boundPort = server.localPort
     @Volatile private var client: Socket? = null
     private val lock = Object()
@@ -80,6 +83,7 @@ internal class BufferedAudioStream(
             accepted = socket
             // One stream has one TCP sender. Release the listening socket after ownership is set.
             server.close()
+            portLease.close() // Existing accepted TCP proxy remains alive.
             log("Buffered audio: connected")
             val input = DataInputStream(socket.getInputStream().buffered())
             var failures = 0
@@ -307,6 +311,7 @@ internal class BufferedAudioStream(
     override fun close() {
         closed.set(true)
         runCatching { server.close() }
+        runCatching { portLease.close() }
         synchronized(lock) {
             // A second external closer must wait for the first one's sink cleanup, rather
             // than return just because closed was set while a delivery callback was active.

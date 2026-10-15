@@ -144,6 +144,8 @@ class CarPlayHostActivity : ComponentActivity() {
     private val siriKeyPresses = WheelKeyPresses()
     private val legacySiriPresses = mutableSetOf<Triple<Int, Int, Int>>()
     private val startupRetryBudget = WirelessStartupRetryBudget()
+    private var pioneerRecoveryAttempts = 0
+    private var pioneerRecoveryStartedNs = 0L
     private var startupRetryStopped = false
     private var startupRetryButton: View? = null
     private var startupFailureGeneration = -1
@@ -188,7 +190,7 @@ class CarPlayHostActivity : ComponentActivity() {
         hostName = "diplay-" + DiPlayBootstrap.deviceId(airPlayIdentity).replace(":", "").lowercase(),
         hostMac = DiPlayBootstrap.deviceId(airPlayIdentity).split(":").map { it.toInt(16).toByte() }.toByteArray(),
         wirelessBluetoothDeviceAddress = DiPlayPreferences.phoneAddress(this),
-        remoteRfcommGateway = RemoteGatewaySettings.load(this),
+        remoteRfcommGateway = if (wirelessEnabled) RemoteGatewaySettings.loadSelected(this, wirelessHotspotMode) else null,
         transport = if (wirelessEnabled) CarPlayTransport.WIRELESS else CarPlayTransport.WIRED,
         wirelessHotspotMode = wirelessHotspotMode,
         wifiP2pPreferredChannel = AirPlayPersistence.loadWifiP2pPreferredChannel(this),
@@ -647,6 +649,7 @@ class CarPlayHostActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        PioneerDebugIntegration.ensure(this)
         NavigationWidgetUpdater.attach(applicationContext)
         CarPlayCallKeys.install(applicationContext)
         CenterMapOverlay.requestShow = ::showCenterMap
@@ -673,6 +676,12 @@ class CarPlayHostActivity : ComponentActivity() {
             resources.getBoolean(R.bool.config_advanced_audio_channel_mapping)
         airPlayIdentity = AirPlayPersistence.loadIdentity(this)
         loadPersistedSettings()
+        PioneerDebugIntegration.attachHost(this, state = {
+            org.json.JSONObject().put("hostAttached", true).put("wireless", wirelessEnabled)
+                .put("vpnReady", vpnReady).put("awaitingVpnConsent", awaitingVpnConsent)
+                .put("controllerRunning", controller != null).put("backgroundSession", CarPlayBackgroundSession.hasSession())
+                .put("stage", latestStage).put("screenStreams", org.json.JSONArray(activeScreenStreamTypes.toList()))
+        }, retryVpn = { requestStartupPrerequisites() }, videoGesture = ::startDebugVideoGesture)
         locationPermissionAvailable = hasFineLocationPermission()
         setContentView(buildContentView())
         applyFullscreenMode()
@@ -810,6 +819,12 @@ class CarPlayHostActivity : ComponentActivity() {
 
     private fun requestVpnConsent() {
         if (awaitingVpnConsent) return
+        if (com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.enabled(this)) {
+            vpnReady = true // This backend has no system VPN prerequisite.
+            appendLog("LWIP selected: system VPN consent not required")
+            maybeStartCarPlay()
+            return
+        }
         val consent = try {
             CarPlayVpnService.prepare(this)
         } catch (error: ActivityNotFoundException) {
@@ -1542,6 +1557,7 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        PioneerDebugIntegration.detachHost(this)
         resetSidePanel()
         releaseSidePanelEffects()
         hostAppearanceResumed = false
@@ -1646,6 +1662,7 @@ class CarPlayHostActivity : ComponentActivity() {
             setOnClickListener {
                 if (!CarPlayBackgroundSession.isOwner(this@CarPlayHostActivity) ||
                     shuttingDown.get() || menuOpen || handshakeResetInProgress) return@setOnClickListener
+                pioneerRecoveryAttempts = 0; pioneerRecoveryStartedNs = 0
                 startupRetryBudget.manualRetry()
                 startupRetryStopped = false
                 reconnectAttempts = 0
@@ -4730,7 +4747,8 @@ class CarPlayHostActivity : ComponentActivity() {
                         if (controllerGeneration == restartGeneration && activeAirPlaySession === session &&
                             !shuttingDown.get() && CarPlayBackgroundSession.isOwner(this@CarPlayHostActivity) &&
                             startupRetryBudget.resetIfStable(session, android.os.SystemClock.elapsedRealtime())) {
-                            appendLog("wireless startup retry budget reset after stable video session")
+                            pioneerRecoveryAttempts = 0; pioneerRecoveryStartedNs = 0
+                            appendLog("startup retry budget reset after stable video session")
                         }
                     }, WirelessStartupPolicy.STABLE_SESSION_MILLIS)
                 }
@@ -5313,6 +5331,14 @@ class CarPlayHostActivity : ComponentActivity() {
         startCarPlay(size)
     }
 
+    private fun stopPioneerRecovery(reason: String) {
+        startupRetryStopped = true
+        startupRetryButton?.visibility = View.VISIBLE
+        setConnectionStage("$reason\nUSB CarPlay recovery stopped after $pioneerRecoveryAttempts retries; tap Retry to start again.")
+        appendLog("PIONEER_RECOVERY_EXHAUSTED attempts=$pioneerRecoveryAttempts reason=$reason")
+        controller?.close()
+    }
+
     private fun reconnectAfterLoss(
         reason: String,
         startupFailure: WirelessStartupFailure? = null,
@@ -5322,6 +5348,27 @@ class CarPlayHostActivity : ComponentActivity() {
         if (menuOpen) recoveryPendingAfterMenu = true
         if (shuttingDown.get() || menuOpen || handshakeResetInProgress || startupRetryStopped) return
         if (reconnectScheduled) return
+        if (!wirelessEnabled && com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.enabled(this)) {
+            val now = System.nanoTime()
+            if (pioneerRecoveryStartedNs == 0L) {
+                pioneerRecoveryStartedNs = now
+                val budgetStart = now
+                mainHandler.postDelayed({
+                    val playing = activeAirPlaySession != null &&
+                        com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.active &&
+                        com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.firstFrameNs != 0L
+                    if (!playing && pioneerRecoveryStartedNs == budgetStart && !startupRetryStopped &&
+                        !shuttingDown.get() && CarPlayBackgroundSession.isOwner(this))
+                        stopPioneerRecovery("USB CarPlay recovery exceeded 120 seconds")
+                }, 120_000)
+            }
+            if (pioneerRecoveryAttempts >= 2 || now-pioneerRecoveryStartedNs > 120_000_000_000L) {
+                stopPioneerRecovery(reason)
+                return
+            }
+            pioneerRecoveryAttempts++
+            appendLog("PIONEER_SESSION_RECOVERY attempt=$pioneerRecoveryAttempts/2 reason=$reason")
+        }
         val startupDelay = if (startupFailure != null && startupFailure.retryable)
             startupRetryBudget.nextDelayMillis() else null
         if (startupFailure != null && startupDelay == null) {
@@ -5546,6 +5593,7 @@ class CarPlayHostActivity : ComponentActivity() {
         val recoveryPending = recoveryPendingAfterMenu || failure != null
         recoveryPendingAfterMenu = false
         if (reconnect) {
+            pioneerRecoveryAttempts = 0; pioneerRecoveryStartedNs = 0
             startupRetryBudget.manualRetry()
             startupRetryStopped = false
         }
@@ -5679,6 +5727,61 @@ class CarPlayHostActivity : ComponentActivity() {
         }
     }
 
+    private var debugGestureRunning = false
+
+    /** Projection-only, alternating central swipes; never injects into other apps or taps buttons. */
+    private fun startDebugVideoGesture(): org.json.JSONObject {
+        check(!debugGestureRunning) { "Video gesture already running" }
+        val target = checkNotNull(controller) { "CarPlay controller unavailable" }
+        val view = checkNotNull(videoView) { "Video view unavailable" }
+        check(!menuOpen && activeScreenStreamTypes.contains(SCREEN_TYPE_MAIN)) { "CarPlay must be visible" }
+        check(view.isShown && view.width > 0 && view.height > 0) { "Video view is not visible" }
+        val generation = restartGeneration
+        val bounds = contentRect(view.width, view.height)
+        debugGestureRunning = true
+        appendLog("TCP_VIDEO_GESTURE start swipes=12 durationMs=700 pauseMs=400")
+        val start = android.os.SystemClock.uptimeMillis()
+        val steps = 42
+        var step = 0
+        var downTime = start
+        fun release() {
+            if (controller === target) target.sendTouch(emptyList())
+            debugGestureRunning = false
+        }
+        val task = object : Runnable {
+            override fun run() {
+                if (isFinishing || shuttingDown.get() || controller !== target ||
+                    generation != restartGeneration || menuOpen || !view.isShown) {
+                    release(); return
+                }
+                val swipe = step / (steps + 1)
+                val position = step % (steps + 1)
+                if (swipe >= 12) {
+                    release(); appendLog("TCP_VIDEO_GESTURE complete"); return
+                }
+                val now = android.os.SystemClock.uptimeMillis()
+                if (position == 0) downTime = now
+                val fraction = position.toFloat() / steps
+                val x = if (swipe % 2 == 0) 0.75f - 0.40f * fraction else 0.35f + 0.40f * fraction
+                val action = when (position) {
+                    0 -> MotionEvent.ACTION_DOWN
+                    steps -> MotionEvent.ACTION_UP
+                    else -> MotionEvent.ACTION_MOVE
+                }
+                val event = MotionEvent.obtain(downTime, now, action,
+                    bounds.left + bounds.width * x, bounds.top + bounds.height * 0.5f, 0)
+                try { onHostTouch(view, event) } finally { event.recycle() }
+                step++
+                val nextSwipe = step / (steps + 1)
+                val nextPosition = step % (steps + 1)
+                val deadline = start + nextSwipe * 1100L + nextPosition * 700L / steps
+                mainHandler.postDelayed(this, (deadline - android.os.SystemClock.uptimeMillis()).coerceAtLeast(1L))
+            }
+        }
+        mainHandler.post(task)
+        return org.json.JSONObject().put("swipes", 12).put("durationMs", 13200)
+    }
+
     private fun onHostTouch(view: View, event: MotionEvent): Boolean {
         if (menuOpen) return true
 
@@ -5743,7 +5846,7 @@ class CarPlayHostActivity : ComponentActivity() {
             return true
         }
         val contacts = CarPlayTouchMapper.contacts(event, content)
-        val queued = controller?.sendTouch(contacts) ?: false
+        val queued = controller?.sendTouch(contacts, isMove = event.actionMasked == MotionEvent.ACTION_MOVE) ?: false
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN,
             MotionEvent.ACTION_POINTER_DOWN,

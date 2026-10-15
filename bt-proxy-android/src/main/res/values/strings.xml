@@ -11,6 +11,8 @@
     <string name="stop_gateway">停止蓝牙透传代理</string>
     <string name="disconnect">断开连接</string>
     <string name="copy_log">复制日志</string>
+    <string name="clear_log">清空日志</string>
+    <string name="communication_ports">通讯端口 · %1$s</string>
     <string name="no_devices">没有已配对设备，请检查权限和系统蓝牙配对</string>
     <string name="grant_permission">申请蓝牙权限</string>
     <string name="open_bluetooth_settings">打开蓝牙设置</string>

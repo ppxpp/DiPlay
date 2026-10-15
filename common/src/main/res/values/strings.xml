@@ -687,8 +687,8 @@
     <string name="settings_usb_charging">iPhone charging</string>
     <string name="settings_usb_charging_normal">Normal (2.4 A)</string>
     <string name="settings_usb_charging_reduced">Reduced (1.5 A)</string>
-    <string name="settings_usb_charging_low">Low (0.5 A)</string>
-    <string name="settings_usb_charging_description">How much charging current DiPlay offers the iPhone over USB. If wired CarPlay drops every few seconds and the iPhone reconnects by itself, the car\'s USB port may not supply enough power: try Reduced, then Low. The iPhone then charges more slowly. Applies at the next USB connection.</string>
+    <string name="settings_usb_charging_low">Low (0.5 A, default)</string>
+    <string name="settings_usb_charging_description">Charging current DiPlay offers the iPhone over USB. The default is 0.5 A; you can also select 1.5 A or 2.4 A according to the USB power supply. Applies at the next USB connection.</string>
     <string name="wheel_joystick_auto_off">Joystick turns off by itself</string>
     <string name="wheel_joystick_auto_off_description">After 15 seconds without a press, and when a route starts, the keys go back to music and volume.</string>
     <string name="wheel_joystick_on">Joystick on</string>
@@ -899,4 +899,5 @@
     <string name="bluetooth_connections_not_real">This head unit’s Android Bluetooth reports a connection, but nothing reaches the iPhone: even a connection to a service that does not exist succeeds. Bluetooth here is handled by the maker’s own module, which apps cannot use, so wireless CarPlay cannot work on this head unit. Try a USB connection.</string>
     <string name="settings_fce_cluster_guidance">Guidance in the FCE cluster (experimental)</string>
     <string name="settings_fce_cluster_guidance_description">Shows CarPlay arrows and the next-turn distance in the instrument cluster’s navigation view on FCE head units, by writing to the head unit’s vehicle service. Tested on one car only; turn it off if the cluster behaves unexpectedly.</string>
+    <string name="settings_pioneer_lan_debug">Local network debugging</string>
 </resources>

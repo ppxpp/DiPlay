@@ -618,8 +618,8 @@
     <string name="settings_usb_charging">Заряджання iPhone</string>
     <string name="settings_usb_charging_normal">Звичайне (2,4 А)</string>
     <string name="settings_usb_charging_reduced">Знижене (1,5 А)</string>
-    <string name="settings_usb_charging_low">Низьке (0,5 А)</string>
-    <string name="settings_usb_charging_description">Струм заряджання, який DiPlay дозволяє iPhone через USB. Якщо дротовий CarPlay обривається кожні кілька секунд і iPhone сам перепідключається, USB-порт автомобіля може не видавати достатньо живлення: спробуйте «Знижене», потім «Низьке». iPhone заряджатиметься повільніше. Застосовується під час наступного USB-підключення.</string>
+    <string name="settings_usb_charging_low">Низьке (0,5 А, типово)</string>
+    <string name="settings_usb_charging_description">Струм заряджання, який DiPlay пропонує iPhone через USB. Типове значення — 0,5 А; також можна вибрати 1,5 А або 2,4 А залежно від живлення USB. Застосовується під час наступного USB-підключення.</string>
     <string name="wheel_joystick_auto_off">Джойстик вимикається сам</string>
     <string name="wheel_joystick_auto_off_description">Через 15 секунд без натискань і коли стартує маршрут кнопки знову керують музикою й гучністю.</string>
     <string name="wheel_joystick_on">Джойстик увімкнено</string>
@@ -810,4 +810,5 @@
     <string name="bluetooth_connections_not_real">Bluetooth Android на цьому головному пристрої повідомляє про з’єднання, але до iPhone нічого не доходить: «успішно» під’єднується навіть служба, якої не існує. Bluetooth тут обслуговує власний модуль виробника, недоступний застосункам, тому бездротовий CarPlay на цьому головному пристрої працювати не може. Спробуйте з’єднання через USB.</string>
     <string name="settings_fce_cluster_guidance">Підказки на панелі приладів FCE (експериментально)</string>
     <string name="settings_fce_cluster_guidance_description">Показує стрілки CarPlay і відстань до наступного маневру в навігаційному поданні панелі приладів на головних пристроях FCE, записуючи дані в сервіс автомобіля. Перевірено лише на одному автомобілі; вимкніть, якщо панель поводиться незвично.</string>
+    <string name="settings_pioneer_lan_debug">Налагодження через локальну мережу</string>
 </resources>

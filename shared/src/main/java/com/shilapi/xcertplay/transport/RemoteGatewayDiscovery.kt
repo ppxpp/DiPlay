@@ -21,7 +21,14 @@ import java.util.concurrent.atomic.AtomicReference
 
 /** Discover current endpoints without opening Bluetooth or persisting their IP addresses. */
 object RemoteGatewayDiscovery {
-    data class Endpoint(val gatewayBluetoothMac: String, val host: String, val port: Int, val source: String)
+    data class Endpoint(
+        val gatewayBluetoothMac: String,
+        val host: String,
+        val port: Int,
+        val source: String,
+        /** Local UDP port that received the discovery reply; 0 when discovery used NSD. */
+        val discoveryLocalPort: Int = 0,
+    )
 
     /** Verify first-pairing credentials without opening the iPhone RFCOMM channel. */
     fun authenticate(endpoint: Endpoint, token: String) {
@@ -50,14 +57,6 @@ object RemoteGatewayDiscovery {
 
     @Suppress("DEPRECATION")
     fun find(context: Context, identity: String? = null, log: (String) -> Unit = {}): Endpoint {
-        if (RemoteRfcommProtocol.DEVELOPMENT_DIRECT_CONNECTION) {
-            val endpoint = Endpoint(RemoteRfcommProtocol.DEVELOPMENT_PROXY_BLUETOOTH_MAC,
-                RemoteRfcommProtocol.DEVELOPMENT_PROXY_HOST, RemoteRfcommProtocol.DEVELOPMENT_PROXY_PORT,
-                "fixed-ip")
-            log("Proxy direct connection host=${endpoint.host} port=${endpoint.port}")
-            authenticate(endpoint, RemoteRfcommProtocol.DEVELOPMENT_TOKEN)
-            return endpoint
-        }
         discoverOverBroadcast(identity, log)?.let { return it }
 
         val nsd = context.applicationContext.getSystemService(Context.NSD_SERVICE) as NsdManager
@@ -147,10 +146,7 @@ object RemoteGatewayDiscovery {
         val query = RemoteRfcommProtocol.discoveryRequest(identity ?: "*")
         for ((localAddress, broadcastAddress) in targets) {
             try {
-                DatagramSocket(null).use { socket ->
-                    socket.reuseAddress = true
-                    socket.broadcast = true
-                    socket.bind(InetSocketAddress(localAddress, 0))
+                openDiscoverySocket(localAddress, log).use { socket ->
                     socket.soTimeout = 500
                     socket.send(DatagramPacket(query, query.size, broadcastAddress,
                         RemoteRfcommProtocol.DISCOVERY_PORT))
@@ -171,8 +167,9 @@ object RemoteGatewayDiscovery {
                             continue
                         }
                         val host = packet.address.hostAddress ?: continue
-                        log("Gateway discovered address=$host port=${response.tcpPort} source=udp-broadcast interface=${localAddress.hostAddress}")
-                        return Endpoint(response.gatewayBluetoothMac, host, response.tcpPort, "udp-broadcast")
+                        log("Gateway discovered address=$host port=${response.tcpPort} source=udp-broadcast interface=${localAddress.hostAddress} localPort=${socket.localPort}")
+                        return Endpoint(response.gatewayBluetoothMac, host, response.tcpPort, "udp-broadcast",
+                            discoveryLocalPort = socket.localPort)
                     }
                 }
             } catch (error: Exception) {
@@ -181,5 +178,31 @@ object RemoteGatewayDiscovery {
         }
         log("Gateway broadcast discovery found no matching service; trying NSD")
         return null
+    }
+
+    // The head unit inbound firewall only accepts UDP on 9911/9912/5656 (iptables_rules.sh),
+    // and the proxy replies to the request source port, so discovery must hold one of them.
+    private val DISCOVERY_SOURCE_PORTS = intArrayOf(9911, 5656, 9912)
+
+    private fun openDiscoverySocket(localAddress: Inet4Address, log: (String) -> Unit): DatagramSocket {
+        for (port in DISCOVERY_SOURCE_PORTS) {
+            val socket = DatagramSocket(null)
+            try {
+                socket.reuseAddress = true
+                socket.broadcast = true
+                socket.bind(InetSocketAddress(localAddress, port))
+                log("Gateway broadcast discovery bound source port=$port interface=${localAddress.hostAddress}")
+                return socket
+            } catch (error: Exception) {
+                runCatching { socket.close() }
+                log("Gateway broadcast discovery source port=$port unavailable error=${error.javaClass.simpleName}")
+            }
+        }
+        val socket = DatagramSocket(null)
+        socket.reuseAddress = true
+        socket.broadcast = true
+        socket.bind(InetSocketAddress(localAddress, 0))
+        log("Gateway broadcast discovery no firewall port free; using ephemeral port=${socket.localPort} interface=${localAddress.hostAddress}")
+        return socket
     }
 }

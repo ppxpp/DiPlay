@@ -4,8 +4,8 @@ package com.shilapi.xcertplay.transport
  * Minimal NTB16 codec for the iPhone NCM data link.
  *
  * Only the 16-bit transfer-block layout used by LIVI's `iap2-usbmux/src/ntb.rs` is implemented:
- * one NTH16 header, one NDP16 table with one datagram, and the USB short-packet pad byte. There
- * is no NTB32, alignment, CRC, or NCM control-plane handling here.
+ * one NTH16 header, one NDP16 table, and the USB short-packet pad byte. Batched output uses
+ * 4-byte datagram alignment. There is no NTB32, CRC, or NCM control-plane handling here.
  */
 object Ntb16Codec {
     const val NTH16_SIG = 0x484d434e
@@ -41,6 +41,39 @@ object Ntb16Codec {
         frame.copyInto(block, DATAGRAM_INDEX)
         // A transfer that ends exactly on a USB packet boundary is read as a short packet.
         return if (block.size % USB_PACKET_SIZE == 0) block + byteArrayOf(0) else block
+    }
+
+    /** Bounded NCM aggregation: the negotiated iPhone OUT alignment/divisor is 4, remainder 0. */
+    fun buildBatch(frames: List<ByteArray>, sequence: Int): ByteArray {
+        require(frames.size in 1..8)
+        if (frames.size == 1) return build(frames.single(), sequence)
+        require(sequence in 0..0xffff)
+        val ndpLength = 8 + 4 * (frames.size + 1)
+        val offsets = IntArray(frames.size)
+        var blockLength = NTH_LENGTH + ndpLength
+        frames.forEachIndexed { index, frame ->
+            require(frame.isNotEmpty())
+            blockLength = (blockLength + 3) and -4
+            offsets[index] = blockLength
+            blockLength += frame.size
+        }
+        require(blockLength <= 16_383) { "Batched NTB exceeds conservative USB transfer limit" }
+        val block = ByteArray(blockLength + if (blockLength % USB_PACKET_SIZE == 0) 1 else 0)
+        putU32(block, 0, NTH16_SIG)
+        putU16(block, 4, NTH_LENGTH)
+        putU16(block, 6, sequence)
+        putU16(block, 8, blockLength)
+        putU16(block, 10, NTH_LENGTH)
+        putU32(block, NTH_LENGTH, NDP16_SIG)
+        putU16(block, NTH_LENGTH + 4, ndpLength)
+        // ByteArray zero initialization supplies next-NDP and the terminating (0,0) entry.
+        frames.forEachIndexed { index, frame ->
+            val entry = NTH_LENGTH + 8 + index * 4
+            putU16(block, entry, offsets[index])
+            putU16(block, entry + 2, frame.size)
+            frame.copyInto(block, offsets[index])
+        }
+        return block
     }
 
     /**

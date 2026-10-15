@@ -1,0 +1,3 @@
+-keep class com.shilapi.xcertplay.pioneer.PioneerUsbNative { *; }
+-keep class com.shilapi.xcertplay.pioneer.PioneerLwipNative { *; }
+-keep class com.shilapi.xcertplay.pioneer.PioneerNativeCrypto { *; }

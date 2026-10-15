@@ -65,9 +65,11 @@ Socket 连接成功不等于双向协议收发、认证或完整 CarPlay 成功�
 旧私有令牌会自动迁移为固定连接码。IP 和端口继续通过发现获取，不内置对端 IP。
 此临时开发模式覆盖上文首次配对码流程；iPhone 与代理设备的蓝牙配对仍由系统完成。
 
-## 当前车机固定 IP 验证
+## 车机防火墙下的发现（2026-10-13）
 
-临时启用 `DEVELOPMENT_DIRECT_CONNECTION`：DiPlay 车机当前地址为 `192.168.105.77`，
-代理设备当前地址为 `192.168.105.7`，TCP 端口 `39877`，固定连接码 `123456`。
-DiPlay 跳过 UDP/NSD 发现和已保存代理选择，直接连接小米代理。代理仍监听所有接口，
-所以不需要把车机 IP 作为接收连接的限制。恢复发现时将该开关设为 `false`。
+车机 OEM 防火墙（`iptables_rules.sh`）只放行入站 UDP `9911/9912/5656`，且代理按请求源端口
+回包——DiPlay 的 UDP 广播发现按 `9911 → 5656 → 9912` 顺序占用源端口，全部被占时才回落
+临时端口并记录告警日志。代理端无需改动。已删除此前的 `DEVELOPMENT_DIRECT_CONNECTION`
+固定 IP 直连开关：IP 和端口始终通过发现获取，不内置对端 IP。
+验证日志：`Gateway broadcast discovery bound source port=…`（钉口成功）与
+`Gateway discovered address=… source=udp-broadcast`（发现成功）。

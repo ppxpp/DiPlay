@@ -1,0 +1,5 @@
+<resources>
+    <string name="gateway_use_local_bluetooth">Usar Bluetooth integrado la próxima vez</string>
+    <string name="gateway_transport_local">Seleccionado: Bluetooth integrado. El modo Wi-Fi se elige en ajustes de conexión; los cambios se aplican en la próxima conexión.</string>
+    <string name="gateway_transport_proxy">Seleccionado: proxy Bluetooth por la red Wi-Fi actual. Los cambios se aplican en la próxima conexión.</string>
+</resources>

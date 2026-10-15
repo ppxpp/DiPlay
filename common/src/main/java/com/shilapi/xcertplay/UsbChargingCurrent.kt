@@ -9,11 +9,11 @@ import com.shilapi.xcertplay.orchestration.CarPlayRuntimeConfig
  * Stable preference values; never persist enum ordinals.
  */
 enum class UsbChargingCurrent(val key: String, val milliAmps: Int) {
-    NORMAL("normal", CarPlayRuntimeConfig.DEFAULT_AVAILABLE_CURRENT_MILLI_AMPS),
+    NORMAL("normal", 2400),
     REDUCED("reduced", 1500),
-    LOW("low", 500);
+    LOW("low", CarPlayRuntimeConfig.DEFAULT_AVAILABLE_CURRENT_MILLI_AMPS);
 
     companion object {
-        fun fromKey(key: String?): UsbChargingCurrent = entries.firstOrNull { it.key == key } ?: NORMAL
+        fun fromKey(key: String?): UsbChargingCurrent = entries.firstOrNull { it.key == key } ?: LOW
     }
 }

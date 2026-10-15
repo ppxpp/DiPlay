@@ -606,8 +606,8 @@
     <string name="settings_usb_charging">Carga del iPhone</string>
     <string name="settings_usb_charging_normal">Normal (2,4 A)</string>
     <string name="settings_usb_charging_reduced">Reducida (1,5 A)</string>
-    <string name="settings_usb_charging_low">Baja (0,5 A)</string>
-    <string name="settings_usb_charging_description">Corriente de carga que DiPlay ofrece al iPhone por USB. Si CarPlay por cable se corta cada pocos segundos y el iPhone se vuelve a conectar solo, puede que el puerto USB del coche no dé suficiente energía: prueba Reducida y después Baja. El iPhone cargará más despacio. Se aplica en la próxima conexión USB.</string>
+    <string name="settings_usb_charging_low">Baja (0,5 A, predeterminada)</string>
+    <string name="settings_usb_charging_description">Corriente de carga que DiPlay ofrece al iPhone por USB. El valor predeterminado es 0,5 A; también se puede elegir 1,5 A o 2,4 A según la alimentación USB. Se aplica en la próxima conexión USB.</string>
     <string name="wheel_joystick_auto_off">El joystick se desactiva solo</string>
     <string name="wheel_joystick_auto_off_description">Tras 15 segundos sin pulsar nada y al iniciar una ruta, los botones vuelven a controlar la música y el volumen.</string>
     <string name="wheel_joystick_on">Joystick activado</string>
@@ -798,4 +798,5 @@
     <string name="bluetooth_connections_not_real">El Bluetooth de Android de esta unidad principal indica una conexión, pero nada llega al iPhone: incluso la conexión a un servicio que no existe tiene éxito. Aquí el Bluetooth lo gestiona un módulo propio del fabricante que las apps no pueden usar, por lo que CarPlay inalámbrico no puede funcionar en esta unidad principal. Prueba una conexión USB.</string>
     <string name="settings_fce_cluster_guidance">Indicaciones en el cuadro FCE (experimental)</string>
     <string name="settings_fce_cluster_guidance_description">Muestra las flechas de CarPlay y la distancia al próximo giro en la vista de navegación del cuadro de instrumentos en unidades FCE, escribiendo en el servicio del vehículo de la unidad. Probado solo en un coche; desactívalo si el cuadro se comporta de forma inesperada.</string>
+    <string name="settings_pioneer_lan_debug">Depuración en la red local</string>
 </resources>

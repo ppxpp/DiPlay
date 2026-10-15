@@ -3,6 +3,11 @@ package com.shilapi.xcertplay.usbcheck
 import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ComponentName
+import android.content.ServiceConnection
+import android.os.IBinder
+import androidx.core.content.FileProvider
+import java.io.File
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -12,6 +17,7 @@ import android.os.Bundle
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -59,29 +65,82 @@ private enum class Page { MAIN, DEVICES, STEPS, LOG }
  */
 class UsbCheckActivity : ComponentActivity() {
 
+    private val vpnConsent = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (android.net.VpnService.prepare(this) == null) startService(Intent(this, VpnDemoService::class.java))
+        else VpnDemoService.save(this, org.json.JSONObject().put("state", "CONSENT_DENIED"))
+    }
+
+    private fun startVpnDemo() {
+        runCatching {
+            val consent = android.net.VpnService.prepare(this)
+            if (consent == null) startService(Intent(this, VpnDemoService::class.java))
+            else {
+                VpnDemoService.save(this, org.json.JSONObject().put("state", "WAITING_CONSENT"))
+                vpnConsent.launch(consent)
+            }
+        }.onFailure {
+            VpnDemoService.save(this, org.json.JSONObject().put("state", "CONSENT_UNAVAILABLE").put("consentLaunchError", it.toString()))
+            // Measure the ordinary-app establish result without any privileged authorization.
+            runCatching { startService(Intent(this, VpnDemoService::class.java)) }.onFailure { error ->
+                VpnDemoService.save(this, org.json.JSONObject().put("state", "FAIL").put("error", error.toString()))
+            }
+        }
+    }
+
+    private fun openVpnSettings() {
+        val attempts = listOf(android.provider.Settings.ACTION_VPN_SETTINGS, android.provider.Settings.ACTION_SETTINGS)
+        for (action in attempts) {
+            val opened = runCatching {
+                startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                if (::engine.isInitialized) engine.appendDiagnostic("VPN_SETTINGS_OPENED action=$action newTask=true")
+            }
+            if (opened.isSuccess) {
+                if (action != android.provider.Settings.ACTION_VPN_SETTINGS)
+                    Toast.makeText(this, "VPN 设置入口不可用，已打开系统设置", Toast.LENGTH_LONG).show()
+                return
+            }
+            if (::engine.isInitialized) engine.appendDiagnostic("VPN_SETTINGS_FAILED action=$action error=${opened.exceptionOrNull()}")
+        }
+        Toast.makeText(this, "车机未提供可打开的系统设置入口", Toast.LENGTH_LONG).show()
+    }
+
     private lateinit var engine: UsbCheckEngine
+    private var debugService by mutableStateOf<DebugService?>(null)
+    private var debugText by mutableStateOf("TCP 调试服务正在启动…")
+    private var bound = false
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            val service = (binder as DebugService.LocalBinder).service
+            debugService = service
+            engine = service.engine
+            engine.onUpdate = { runOnUiThread { ui = engine.state } }
+            ui = engine.state
+            engine.refreshDevices()
+            handleLaunchIntent(intent)
+        }
+        override fun onServiceDisconnected(name: ComponentName?) { debugService = null }
+    }
     private var ui by mutableStateOf<UsbCheckEngine.State?>(null)
     private var page by mutableStateOf(Page.MAIN)
 
     private val attachReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            usbDevice(intent)?.let { engine.noteAttach(describe(it)) }
+            if (::engine.isInitialized) usbDevice(intent)?.let { engine.noteAttach(describe(it)) }
         }
     }
     private val detachReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            usbDevice(intent)?.let { engine.noteDetach(describe(it)) }
+            if (::engine.isInitialized) usbDevice(intent)?.let { engine.noteDetach(describe(it)) }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        engine = UsbCheckEngine(this)
-        engine.onUpdate = { ui = engine.state }
-        ui = engine.state
-        engine.refreshDevices()
-        handleLaunchIntent(intent)
+        val serviceIntent = Intent(this, DebugService::class.java)
+        ContextCompat.startForegroundService(this, serviceIntent)
+        bound = bindService(serviceIntent, connection, Context.BIND_AUTO_CREATE)
+        handleInstallIntent(intent)
 
         ContextCompat.registerReceiver(
             this, attachReceiver,
@@ -95,18 +154,35 @@ class UsbCheckActivity : ComponentActivity() {
         setContent {
             LaunchedEffect(Unit) {
                 while (true) {
-                    engine.refreshDevices()
-                    delay(2_000)
+                    if (::engine.isInitialized) engine.refreshDevices()
+                    debugService?.let { service ->
+                        debugText = "TCP ${service.addresses().joinToString(" / ")} :${service.port}  口令 ${service.token}  ${service.listenerMessage}"
+                    }
+                    delay(1_000)
                 }
             }
             BackHandler(enabled = page != Page.MAIN) { page = Page.MAIN }
             MaterialTheme(colorScheme = darkColorScheme()) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    val state = ui ?: engine.state
+                    val state = ui
+                    if (state == null) { Text("正在启动 USB 调试服务…"); return@Surface }
                     when (page) {
                         Page.MAIN -> MainScreen(
                             state = state,
                             onStart = { engine.start() },
+                            onUsbOnly = { engine.start(UsbCheckEngine.Mode.USB_ONLY) },
+                            onDetach = { engine.start(UsbCheckEngine.Mode.DETACH_NEGOTIATE) },
+                            onNative = { engine.start(UsbCheckEngine.Mode.NATIVE_NEGOTIATE) },
+                            onMfi = { engine.start(UsbCheckEngine.Mode.MFI_AUTH) },
+                            onVpn = ::startVpnDemo,
+                            onVpnSettings = ::openVpnSettings,
+                            onStop = { engine.stop() },
+                            debugText = debugText,
+                            onCloseDebug = {
+                                engine.stop()
+                                stopService(Intent(this, DebugService::class.java))
+                                finish()
+                            },
                             onCopy = ::copyReport,
                             onSave = ::saveReportFile,
                             onOpen = { page = it },
@@ -134,17 +210,39 @@ class UsbCheckActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handleLaunchIntent(intent)
+        setIntent(intent)
+        if (::engine.isInitialized) handleLaunchIntent(intent)
+        handleInstallIntent(intent)
     }
 
     override fun onDestroy() {
         runCatching { unregisterReceiver(attachReceiver) }
         runCatching { unregisterReceiver(detachReceiver) }
-        engine.shutdown()
+        if (::engine.isInitialized) engine.onUpdate = null
+        if (bound) unbindService(connection)
         super.onDestroy()
     }
 
+    private fun handleInstallIntent(intent: Intent?) {
+        val path = intent?.getStringExtra("install_path") ?: return
+        intent.removeExtra("install_path")
+        val file = File(path)
+        if (!file.exists() || file.parentFile?.canonicalPath != cacheDir.canonicalPath) return
+        runCatching {
+            val uri = FileProvider.getUriForFile(this, "$packageName.updates", file)
+            startActivity(Intent(Intent.ACTION_INSTALL_PACKAGE).setData(uri)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        }.onFailure {
+            Toast.makeText(this, "无法打开系统安装器: ${it.message}", Toast.LENGTH_LONG).show()
+            debugService?.engine?.appendDiagnostic("APK 安装器不可用: ${it.message}；需恢复 USB ADB 安装")
+        }
+    }
+
     private fun handleLaunchIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra("vpn_demo", false) == true) {
+            intent.removeExtra("vpn_demo")
+            startVpnDemo()
+        }
         if (intent?.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return
         usbDevice(intent)?.let { engine.noteAttach("应用由 USB 插入事件启动：${describe(it)}") }
     }
@@ -177,6 +275,15 @@ private val DIM_COLOR = Color(0xFF9E9E9E)
 private fun MainScreen(
     state: UsbCheckEngine.State,
     onStart: () -> Unit,
+    onUsbOnly: () -> Unit,
+    onDetach: () -> Unit,
+    onNative: () -> Unit,
+    onMfi: () -> Unit,
+    onVpn: () -> Unit,
+    onVpnSettings: () -> Unit,
+    onStop: () -> Unit,
+    debugText: String,
+    onCloseDebug: () -> Unit,
     onCopy: () -> Unit,
     onSave: () -> Unit,
     onOpen: (Page) -> Unit,
@@ -187,7 +294,19 @@ private fun MainScreen(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("DiPlay USB 链路检查", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.width(10.dp))
-            Text("（仅验证建立 VPN 之前的 USB 步骤）", style = MaterialTheme.typography.bodySmall, color = DIM_COLOR)
+            Text("（分阶段验证 USB / iAP2 / MFi）", style = MaterialTheme.typography.bodySmall, color = DIM_COLOR)
+        }
+        Text(debugText, style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onVpn, enabled = !state.running) { Text("验证 VPN / TUN") }
+            OutlinedButton(onClick = onVpnSettings) { Text("打开 VPN 系统设置") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onUsbOnly, enabled = !state.running) { Text("只查 USB") }
+            OutlinedButton(onClick = onDetach, enabled = !state.running) { Text("预解绑对照实验") }
+            OutlinedButton(onClick = onNative, enabled = !state.running) { Text("Native errno 实验") }
+            OutlinedButton(onClick = onStop, enabled = state.running) { Text("停止检查") }
+            OutlinedButton(onClick = onCloseDebug) { Text("退出并关闭调试") }
         }
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -197,8 +316,10 @@ private fun MainScreen(
             Spacer(Modifier.width(8.dp))
             OutlinedButton(onClick = onSave) { Text("保存报告") }
             Spacer(Modifier.width(8.dp))
+            OutlinedButton(onClick = onMfi, enabled = !state.running) { Text("验证 MFi") }
+            Spacer(Modifier.width(8.dp))
             Button(onClick = onStart, enabled = !state.running) {
-                Text(if (state.running) "检查中…" else "开始检查")
+                Text(if (state.running) "检查中…" else "验证协商入口")
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -225,8 +346,8 @@ private fun MainScreen(
         }
         Spacer(Modifier.height(8.dp))
         Text(
-            "插上 iPhone 后点“开始检查”，结果实时显示在本页与三个详情页；每次检查结束会自动保存报告文件，" +
-                "拔掉 iPhone 再插 ADB 后可按日志中的“取出方式”命令把文件拷走。",
+            "先暂停 DiPlay。插上并解锁 iPhone 后验证协商入口，允许“信任”。成功标志为 IdentificationAccepted，" +
+                "协商入口模式随后停止；“验证 MFi”额外完成认证与 NCM 探测，不启动 VPN。通过同一局域网 TCP 导出日志。",
             style = MaterialTheme.typography.bodySmall,
             color = DIM_COLOR,
         )

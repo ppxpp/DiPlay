@@ -650,8 +650,8 @@
     <string name="settings_usb_charging">iPhone 充电</string>
     <string name="settings_usb_charging_normal">标准（2.4 A）</string>
     <string name="settings_usb_charging_reduced">降低（1.5 A）</string>
-    <string name="settings_usb_charging_low">低（0.5 A）</string>
-    <string name="settings_usb_charging_description">DiPlay 通过 USB 允许 iPhone 使用的充电电流。如果有线 CarPlay 每隔几秒断开、iPhone 自行重新连接，可能是车机 USB 口供电不足：请先试「降低」，再试「低」。iPhone 充电会变慢。下次 USB 连接时生效。</string>
+    <string name="settings_usb_charging_low">低（0.5 A，默认）</string>
+    <string name="settings_usb_charging_description">DiPlay 通过 USB 向 iPhone 声明可用的充电电流，默认 0.5 A。也可根据 USB 口供电能力选择 1.5 A 或 2.4 A。下次 USB 连接时生效。</string>
     <string name="wheel_joystick_auto_off">摇杆自动关闭</string>
     <string name="wheel_joystick_auto_off_description">15 秒内无按键操作或开始导航时，按键恢复控制音乐和音量。</string>
     <string name="wheel_joystick_on">摇杆已开启</string>
@@ -858,4 +858,5 @@
     <string name="bluetooth_connections_not_real">此车机的系统蓝牙回报“已连接”，但实际上没有连到 iPhone：连一个不存在的服务也回报成功。这里的蓝牙由厂商自己的模块处理，应用无法使用，所以此车机无法使用无线 CarPlay。请尝试 USB 连接。</string>
     <string name="settings_fce_cluster_guidance">FCE 仪表导航（实验性）</string>
     <string name="settings_fce_cluster_guidance_description">在 FCE 平台车机上，通过车机的车辆服务把 CarPlay 转向箭头和到下一路口的距离显示在仪表的导航界面。仅在一辆车上测试过；如果仪表显示异常，请关闭。</string>
+    <string name="settings_pioneer_lan_debug">局域网调试</string>
 </resources>

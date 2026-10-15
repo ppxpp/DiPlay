@@ -31,11 +31,23 @@ class RfcommGatewayServer(context: Context, private val directory: File, private
     @Volatile private var discoverySocket: DatagramSocket? = null
     @Volatile private var client: Socket? = null
     @Volatile private var bluetooth: BluetoothSocket? = null
+    @Volatile private var lastDiscoveryPeer: String? = null
 
     val isRunning: Boolean get() = listener?.isClosed == false
 
+    /** Proxy listening ports plus the DiPlay-side source ports seen in traffic, for the development UI. */
+    fun endpointSummary(): String? {
+        val server = listener ?: return null
+        if (server.isClosed) return null
+        val discoveryPeer = lastDiscoveryPeer ?: "等待发现"
+        val dataPeer = client?.let { "${it.inetAddress.hostAddress}:${it.port}" } ?: "等待连接"
+        return "代理 TCP ${server.localPort} · UDP ${discoverySocket?.localPort ?: "-"}\n" +
+            "DiPlay 发现 $discoveryPeer · 数据 $dataPeer"
+    }
+
     fun start(device: BluetoothDevice) {
         check(listener == null) { "Gateway already running" }
+        lastDiscoveryPeer = null
         val mac = File(directory, "gateway-bluetooth-mac.txt").readText().trim()
         require(mac.matches(Regex("(?i)[0-9a-f]{2}(:[0-9a-f]{2}){5}")) && mac != "02:00:00:00:00:00") {
             "Configure the real Android A Bluetooth address first"
@@ -116,12 +128,13 @@ class RfcommGatewayServer(context: Context, private val directory: File, private
                     socket.receive(request)
                     val requestedMac = Protocol.parseDiscoveryRequest(request.data, request.length) ?: continue
                     if (requestedMac != "*" && !requestedMac.equals(mac, ignoreCase = true)) continue
+                    lastDiscoveryPeer = "${request.address.hostAddress}:${request.port}"
                     DatagramSocket().use { replySocket ->
                         replySocket.connect(request.address, request.port)
                         val response = Protocol.discoveryResponse(mac, tcpPort)
                         replySocket.send(DatagramPacket(response, response.size, request.address, request.port))
                     }
-                    log("phase=DISCOVERY event=UDP_REPLY peer=${request.address.hostAddress}")
+                    log("phase=DISCOVERY event=UDP_REPLY peer=${request.address.hostAddress}:${request.port}")
                 } catch (error: Exception) {
                     if (discoverySocket === socket && !socket.isClosed) {
                         log("phase=DISCOVERY event=UDP_ERROR error=${error.javaClass.simpleName}")

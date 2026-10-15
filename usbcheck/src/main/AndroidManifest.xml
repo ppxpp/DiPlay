@@ -6,17 +6,34 @@
         android:name="android.hardware.usb.host"
         android:required="true" />
 
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.READ_LOGS" />
+
     <application
         android:allowBackup="false"
         android:label="@string/app_name"
         android:theme="@style/Theme.UsbCheck">
+
+        <service android:name=".DebugService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Local network USB diagnostic control during iPhone attachment" />
+        </service>
+        <provider android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates" android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/update_paths" />
+        </provider>
 
         <!-- Android 16+ 大屏默认忽略固定方向上锁；本测试 App 需要强制横屏。 -->
         <property
             android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_ORIENTATIONS"
             android:value="true" />
 
-        <!-- 本 App 只验证 VPN 之前的步骤，shared 合并进来的 VPN 服务在此移除。 -->
+        <service android:name=".VpnDemoService" android:permission="android.permission.BIND_VPN_SERVICE" android:exported="true">
+            <intent-filter><action android:name="android.net.VpnService" /></intent-filter>
+        </service>
+        <!-- 使用独立的最小 VPN demo，不启动 shared 的完整 CarPlay 服务。 -->
         <service
             android:name="com.shilapi.xcertplay.network.CarPlayVpnService"
             tools:node="remove" />

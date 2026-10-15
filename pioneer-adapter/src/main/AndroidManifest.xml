@@ -1,0 +1,17 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <application>
+        <service android:name=".PioneerDebugService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Owner enabled LAN diagnostics during wired CarPlay testing" />
+        </service>
+        <activity android:name=".PioneerDebugActivity" android:exported="false" android:launchMode="singleTop"
+            android:label="DiPlay 车机调试" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+        <provider android:name=".PioneerUpdateProvider" android:authorities="${applicationId}.pioneer-updates"
+            android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/pioneer_update_paths" />
+        </provider>
+    </application>
+</manifest>

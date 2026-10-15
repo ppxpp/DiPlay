@@ -32,6 +32,8 @@ class ProbeActivity : Activity() {
     private var paired = emptyList<PairedDevice>()
     private var adapterAvailable = false
     private var busy = false
+    private var iosCallbackRegistered = false
+    private var iosSppRequested = false
     private var receiverRegistered = false
     private val events = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -53,6 +55,35 @@ class ProbeActivity : Activity() {
             .onFailure { stage(0, "阻塞：没有可用先锋 SDK；${message(it)}") }
         registerEvents()
         refreshDevices()
+        dispatchProbeIntent(intent)
+    }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        dispatchProbeIntent(intent)
+    }
+    private fun dispatchProbeIntent(command: Intent) {
+        val action = command.getStringExtra("probe_action") ?: return
+        val handler = android.os.Handler(mainLooper)
+        val task = object : Runnable {
+            override fun run() {
+                if (isDestroyed) return
+                if (busy) { handler.postDelayed(this, 250); return }
+                runTest {
+                    record("ADB 技术验证 action=$action")
+                    when (action) {
+                        "bluetooth" -> { inspect(paired.first()); iosMgrConnectSpp(); iosMgrCleanup() }
+                        "audio_inventory" -> AudioChannelProbe(this@ProbeActivity, ::record, cancelled).inventory()
+                        "audio" -> AudioChannelProbe(this@ProbeActivity, ::record, cancelled).play(
+                            command.getIntExtra("source", 300), command.getIntExtra("stream", 401),
+                            command.getStringExtra("token"), command.getIntExtra("focus_stream", -1),
+                            command.getIntExtra("duration_ms", 8000), command.getBooleanExtra("restore", true))
+                        else -> record("未知验证动作=$action")
+                    }
+                }
+            }
+        }
+        handler.postDelayed(task, 500)
     }
     private fun buildUi() {
         val root = LinearLayout(this).apply {
@@ -83,10 +114,16 @@ class ProbeActivity : Activity() {
         }
         button(left, "读取步骤 1–4 的接口证据") { runSelected { inspect(it) } }
         button(left, "验证原生候选连接入口") { runSelected { connectCandidate(it) } }
+        button(left, "IOSMgr：注册 IIOSClient 回调（77）") { runTest { iosMgrCallbackToggle() } }
+        button(left, "IOSMgr：发起 SPP 连接协商（65）") { runTest { iosMgrConnectSpp() } }
+        button(left, "IOSMgr：断开 SPP 并注销（66/78）") { runTest { iosMgrCleanup() } }
+        button(left, "读取音源 / 音频通道清单") { runTest {
+            AudioChannelProbe(this, ::record, cancelled).inventory()
+        } }
         button(left, "检查步骤 5–6 的前置条件") { runTest {
-            stage(4, "阻塞：尚无先锋字节收发通道，不能启动 iAP2 握手")
-            stage(5, "待验证：依赖 iAP2 与 MFi，不发送 Wi-Fi 参数")
-            record("下一接口：串口回调注册、原始字节接收、IMemory 写入；确认后接入 Iap2LinkProbe 和 DiPlay 无线控制引擎")
+            stage(4, "静态解码已定位字节通道链路（77 注册 → 65 请求 SPP → 87 承载数据）；未实测前不定论")
+            stage(5, "待验证：无线授权由 iPhone 侧驱动 iAP2 流程；本探针不伪造授权或凭据")
+            record("IOSMgr 接口已在解码层定位；实测通过后接入 Iap2LinkProbe 和 DiPlay 无线控制引擎")
         } }
         val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         columns.addView(right, LinearLayout.LayoutParams(0, -1, 0.62f))
@@ -173,10 +210,7 @@ class ProbeActivity : Activity() {
         for (index in 0..4) binder.query(78, device.handle, index)
         for (index in 0..8) { if (cancelled.get()) break; binder.query(134, index) }
         binder.query(141)
-        val ios = PioneerBinder.service("IOSMgr")
-        record("IOSMgr 存在=${ios != null} descriptor=${ios?.interfaceDescriptor}；存在不代表已建立会话")
-        stage(3, "已读取候选串口状态；尚未证明 UUID、回调与字节通道")
-        stage(4, "阻塞：尚无先锋字节收发通道")
+        iosMgrSweep()
         stage(5, "待验证：依赖 iAP2 与 MFi")
         record("SDK 查询接口清单：" + device.native.javaClass.methods.filter {
             it.name.contains("pair", true) || it.name.contains("uuid", true) || it.name.contains("service", true)
@@ -209,6 +243,101 @@ class ProbeActivity : Activity() {
             runCatching { binder.stopCandidate() }.onFailure { record("本次候选清理失败：${message(it)}") }
             record("配置回读 before=$before after=${binder.output(81, device.handle)}")
             record("连接 profile 回读=${binder.output(80, device.handle)}")
+        }
+    }
+    private fun iosMgrSweep() {
+        val ios = IosMgrProbe(::record)
+        record(ios.availableDescription())
+        for (code in listOf(75, 76, 67, 74, 70, 71, 72, 82)) ios.call(code, IosMgrProbe.DEV_BT)
+        for (mode in 0..2) ios.call(79, mode)
+        stage(3, "已读取 IOSMgr 原生状态；会话有无以 67/74 与 dumpsys IOSMgr 对照为准")
+        stage(4, "静态解码已定位字节通道（77→65→87）；实测完成前不定论，不写字节、不伪造会话")
+    }
+    private fun iosMgrCallbackToggle() {
+        check(IosMgrProbe.firmwareKnown()) { "固件指纹不同，未发送 IOSMgr 调用" }
+        val ios = IosMgrProbe(::record)
+        record(ios.availableDescription())
+        if (!iosCallbackRegistered) {
+            val result = ios.call(77, IosMgrProbe.DEV_BT)
+            iosCallbackRegistered = result.status == 0
+            record("回调注册：status=${result.status} registered=$iosCallbackRegistered（独立 CLIENT_ID 槽，未占用其他客户端）")
+            stage(4, if (iosCallbackRegistered) "IIOSClient 回调已注册，事件将实时记录；处理完成用清理按钮注销" else "注册被拒绝或被过滤，见报告")
+        } else {
+            val result = ios.call(78, IosMgrProbe.DEV_BT)
+            iosCallbackRegistered = result.status != 0
+            record("回调注销：status=${result.status} stillRegistered=$iosCallbackRegistered")
+            stage(4, if (iosCallbackRegistered) "注销未受理；进程退出后残留注册会自然失效" else "IIOSClient 回调已注销")
+        }
+    }
+    private fun iosMgrConnectSpp() {
+        check(IosMgrProbe.firmwareKnown()) { "固件指纹不同，未发送 IOSMgr 调用" }
+        val ios = IosMgrProbe(::record)
+        record(ios.availableDescription())
+        if (!iosCallbackRegistered) {
+            val reg = ios.call(77, IosMgrProbe.DEV_BT, quiet = true)
+            iosCallbackRegistered = reg.status == 0
+            record("预置回调观察：注册${if (iosCallbackRegistered) "成功" else "未受理"}（77 状态=${reg.status}）")
+        }
+        val device = ios.call(79, IosMgrProbe.DEV_BT)
+        val connect = ios.call(67, IosMgrProbe.DEV_BT)
+        val lastResult = ios.call(74, IosMgrProbe.DEV_BT)
+        val accepted = listOf(device, connect, lastResult).all { it.status == 0 }
+        val block = ProbePolicy.sppConnectBlock(true, accepted, device.value, connect.value)
+        if (block != null) {
+            stage(3, "阻塞：$block")
+            record("未发送连接请求：$block")
+            return
+        }
+        record("连接前基线：dev=${device.value} conn=${connect.value} 上次结果=${lastResult.value}（74 是对端保留的上次结果 bool，不参与门禁）")
+        val request = ios.call(65, IosMgrProbe.DEV_BT)
+        if (request.status != 0) {
+            stage(3, "失败：ConnectSpp 未受理（状态=${request.status}）；不推断硬件或配对能力")
+            return
+        }
+        iosSppRequested = true
+        stage(3, "已受理 SPP 连接请求；观察 30s，比对前后状态与回调")
+        record("已受理（65 状态=0）；每秒轮询 67/74/79，值变化时记录")
+        var lastLine = ""
+        repeat(30) { index ->
+            if (!cancelled.get()) {
+                Thread.sleep(1000)
+                val currentConnect = ios.call(67, IosMgrProbe.DEV_BT, quiet = true)
+                val currentResult = ios.call(74, IosMgrProbe.DEV_BT, quiet = true)
+                val currentDevice = ios.call(79, IosMgrProbe.DEV_BT, quiet = true)
+                val line = "t+${index + 1}s conn=${currentConnect.value} result=${currentResult.value} dev=${currentDevice.value}"
+                if (line != lastLine) {
+                    record(line)
+                    lastLine = line
+                }
+            }
+        }
+        val afterConnect = ios.call(67, IosMgrProbe.DEV_BT)
+        val afterResult = ios.call(74, IosMgrProbe.DEV_BT)
+        val afterDevice = ios.call(79, IosMgrProbe.DEV_BT)
+        record("连接后回读：dev=${afterDevice.value} conn=${afterConnect.value} 上次结果=${afterResult.value}")
+        stage(4, "观察结束：SPP 是否进入 iAP2 以回调事件、67/74 值变化与 iPhone 侧表现为准")
+    }
+    private fun iosMgrCleanup() {
+        check(IosMgrProbe.firmwareKnown()) { "固件指纹不同，未发送 IOSMgr 调用" }
+        val ios = IosMgrProbe(::record)
+        record(ios.availableDescription())
+        if (iosSppRequested) {
+            val before = ios.call(67, IosMgrProbe.DEV_BT)
+            val disconnect = ios.call(66, IosMgrProbe.DEV_BT)
+            iosSppRequested = false
+            Thread.sleep(1500)
+            val after = ios.call(67, IosMgrProbe.DEV_BT)
+            record("断开 SPP：66 状态=${disconnect.status}；conn ${before.value} -> ${after.value}")
+            stage(3, "已请求断开本次会话发起的 SPP（66 状态=${disconnect.status}）")
+        } else {
+            record("本次会话未发起过 SPP 连接，未发送 66；不误断系统会话")
+        }
+        if (iosCallbackRegistered) {
+            val unreg = ios.call(78, IosMgrProbe.DEV_BT)
+            iosCallbackRegistered = unreg.status != 0
+            record("回调注销：78 状态=${unreg.status} stillRegistered=$iosCallbackRegistered")
+        } else {
+            record("回调未注册，无需注销")
         }
     }
     private fun stage(index: Int, evidence: String) {

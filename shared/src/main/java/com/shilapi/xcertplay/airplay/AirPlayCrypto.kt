@@ -53,7 +53,7 @@ object AirPlayCrypto {
 
     /** Implementation used by this thread's last successful operation, for diagnostics. */
     val chachaImplementation: String
-        get() = platformState.get()?.implementation ?: "BouncyCastle"
+        get() = if (com.shilapi.xcertplay.pioneer.PioneerNativeCrypto.available) "Monocypher-native" else platformState.get()?.implementation ?: "BouncyCastle"
 
     data class X25519KeyPair(val privateKey: ByteArray, val publicKey: ByteArray)
     data class Ed25519KeyPair(val privateKey: ByteArray, val publicKey: ByteArray)
@@ -112,7 +112,9 @@ object AirPlayCrypto {
         nonce: ByteArray,
         plaintext: ByteArray,
         aad: ByteArray = ByteArray(0),
-    ): ByteArray = platformChacha(Cipher.ENCRYPT_MODE, key, nonce, plaintext, aad)
+    ): ByteArray = if (com.shilapi.xcertplay.pioneer.PioneerNativeCrypto.available)
+        com.shilapi.xcertplay.pioneer.PioneerNativeCrypto.transform(true, key, nonce, plaintext, aad)
+        else platformChacha(Cipher.ENCRYPT_MODE, key, nonce, plaintext, aad)
         ?: chachaSealBouncyCastle(key, nonce, plaintext, aad).also {
             platformState.get()?.implementation = "BouncyCastle"
         }
@@ -122,7 +124,9 @@ object AirPlayCrypto {
         nonce: ByteArray,
         ciphertextAndTag: ByteArray,
         aad: ByteArray = ByteArray(0),
-    ): ByteArray = platformChacha(Cipher.DECRYPT_MODE, key, nonce, ciphertextAndTag, aad)
+    ): ByteArray = if (com.shilapi.xcertplay.pioneer.PioneerNativeCrypto.available)
+        com.shilapi.xcertplay.pioneer.PioneerNativeCrypto.transform(false, key, nonce, ciphertextAndTag, aad)
+        else platformChacha(Cipher.DECRYPT_MODE, key, nonce, ciphertextAndTag, aad)
         ?: chachaOpenBouncyCastle(key, nonce, ciphertextAndTag, aad).also {
             platformState.get()?.implementation = "BouncyCastle"
         }

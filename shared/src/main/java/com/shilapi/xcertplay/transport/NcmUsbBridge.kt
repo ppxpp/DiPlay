@@ -1,5 +1,6 @@
 package com.shilapi.xcertplay.transport
 
+import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
@@ -29,15 +30,22 @@ class NcmUsbBridge internal constructor(
     descriptorHostMac: ByteArray?,
     private val onDiagnostic: (String) -> Unit = {},
 ) : Closeable {
+    private val connectionRunId = com.shilapi.xcertplay.pioneer.PioneerConnectionTrace.runId
+    private var lastNetworkValue = -1
     private val descriptorMac = descriptorHostMac?.copyOf()
     val hostMac: ByteArray? get() = descriptorMac?.copyOf()
     private val stateLock = Any()
     private val readLock = Any()
     private val writeLock = Any()
     private var closed = false
+    private var cleanupComplete = false
     private var failure: IphoneUsbException? = null
     private var sequence = 0
     private var loggedWriteTimeout = false
+    private var writeDiagnosticBudget = 16
+    private var readQueuedSession = 0L
+    private var readQueuedNs = 0L
+    private val frameTimes = ArrayDeque<Long>()
     private val frames = ArrayDeque<ByteArray>()
     private var queuedBytes = 0
     private var buffered = ByteArray(0)
@@ -67,35 +75,74 @@ class NcmUsbBridge internal constructor(
         }
     }
 
-    /** Wraps one Ethernet frame in one NTB16 block and writes it to bulk OUT. */
-    fun send(frame: ByteArray, timeoutMillis: Int) = synchronized(writeLock) {
-        checkOpen()
-        require(timeoutMillis > 0) { "timeoutMillis must be positive" }
-        val sequence = synchronized(stateLock) {
-            checkOpenLocked()
-            this.sequence.also { this.sequence = (this.sequence + 1) and 0xffff }
-        }
-        val block = Ntb16Codec.build(frame, sequence)
-        val transferred = connection.bulkTransfer(outEndpoint, block, block.size, timeoutMillis)
-        // Before StartCarPlaySession the phone keeps the NCM data path NAKed. Android reports the
-        // resulting timeout as -1; it is not a detach and later packets must be allowed to retry.
-        if (transferred <= 0) {
-            if (!loggedWriteTimeout) {
-                loggedWriteTimeout = true
-                Log.i(IphoneCarPlayConfiguration.TAG, "ncm bulk-out not ready; retaining bridge for retry")
-            }
-            return@synchronized
-        }
-        if (transferred != block.size) {
-            throw IphoneUsbException.DeviceUnavailable(
-                "NCM write transferred $transferred of ${block.size} bytes",
-            )
-        }
-        if (loggedWriteTimeout) {
-            loggedWriteTimeout = false
-            Log.i(IphoneCarPlayConfiguration.TAG, "ncm bulk-out became ready")
-        }
+    enum class WriteFailure { NONE, TIMEOUT, DISCONNECTED, STALL, MEMORY, PARTIAL, UNKNOWN }
+    data class WriteResult(val transferred: Int, val expected: Int, val failure: WriteFailure,
+        val buildNs: Long, val writeNs: Long, val copyNs: Long = 0, val ioctlNs: Long = 0) {
+        val completed: Boolean get() = failure == WriteFailure.NONE
     }
+    /** Legacy VPN callers retain their Boolean contract; partial writes remain fatal. */
+    fun send(frame: ByteArray, timeoutMillis: Int): Boolean {
+        val result = sendMeasured(frame, timeoutMillis)
+        if (result.failure == WriteFailure.PARTIAL) throw IphoneUsbException.DeviceUnavailable(
+            "NCM partial NTB ${result.transferred}/${result.expected}; restarting required")
+        return result.completed
+    }
+    fun sendMeasured(frame: ByteArray, timeoutMillis: Int): WriteResult = sendBatchMeasured(listOf(frame), timeoutMillis)
+
+    fun sendBatchMeasured(frames: List<ByteArray>, timeoutMillis: Int): WriteResult = synchronized(writeLock) {
+        checkOpen()
+        require(timeoutMillis > 0)
+        val started = System.nanoTime()
+        val seq = synchronized(stateLock) { checkOpenLocked(); sequence.also { sequence = (sequence + 1) and 0xffff } }
+        val block = Ntb16Codec.buildBatch(frames, seq)
+        val writing = System.nanoTime()
+        val native = com.shilapi.xcertplay.pioneer.PioneerUsbPolicy.matchesDevice()
+        val detail = if (native && com.shilapi.xcertplay.pioneer.PioneerDiagnostics.enabled)
+            com.shilapi.xcertplay.pioneer.PioneerUsbNative.bulkWriteMeasured(connection.fileDescriptor, outEndpoint.address, block, timeoutMillis) else null
+        val transferred = detail?.get(0)?.toInt() ?: if (native)
+            com.shilapi.xcertplay.pioneer.PioneerUsbNative.bulkWrite(connection.fileDescriptor, outEndpoint.address, block, timeoutMillis)
+        else connection.bulkTransfer(outEndpoint, block, block.size, timeoutMillis)
+        val classification = when {
+            transferred == block.size -> WriteFailure.NONE
+            transferred > 0 -> WriteFailure.PARTIAL
+            transferred == -110 || transferred == 0 -> WriteFailure.TIMEOUT
+            transferred == -19 || transferred == -9 || transferred == -108 -> WriteFailure.DISCONNECTED
+            transferred == -32 -> WriteFailure.STALL
+            transferred == -12 -> WriteFailure.MEMORY
+            else -> WriteFailure.UNKNOWN // Android -1 does not expose errno.
+        }
+        if (writeDiagnosticBudget-- > 0) runCatching { onDiagnostic(
+            "NCM_TX transferred=$transferred expected=${block.size} frames=${frames.size} frameBytes=${frames.sumOf { it.size }} timeoutMs=$timeoutMillis failure=$classification") }
+        WriteResult(transferred, block.size, classification, writing - started, System.nanoTime() - writing, detail?.get(1) ?: 0, detail?.get(2) ?: 0)
+    }
+    /** Only the OUT endpoint; caller serializes with the single USB writer. */
+    fun recoverOutHalt(): Int = synchronized(writeLock) {
+        checkOpen()
+        com.shilapi.xcertplay.pioneer.PioneerUsbNative.clearHalt(connection.fileDescriptor, outEndpoint.address)
+    }
+    /** IN is quiesced/cancelled before alternate changes; no USB read races with this operation. */
+    fun rebuildDataInterface(): Boolean = synchronized(readLock) { synchronized(writeLock) rebuild@{
+        checkOpen()
+        val data = claimedInterfaces.firstOrNull { iface ->
+            (0 until iface.endpointCount).any { iface.getEndpoint(it).address == outEndpoint.address }
+        }
+            ?: return@rebuild false
+        synchronized(stateLock) {
+            readRequest?.cancel()
+        }
+        if (readQueued) {
+            try {
+                val completed = readRequests.await(500)
+                if (completed == null || completed !== readRequest) return@rebuild false
+                readQueued = false
+            } catch (_: Exception) { return@rebuild false }
+        }
+        val zero = com.shilapi.xcertplay.pioneer.PioneerUsbNative.setAlternate(connection.fileDescriptor, data.id, 0)
+        val one = if (zero == 0) com.shilapi.xcertplay.pioneer.PioneerUsbNative.setAlternate(connection.fileDescriptor, data.id, data.alternateSetting) else zero
+        runCatching { onDiagnostic("NCM_INTERFACE_REBUILD iface=${data.id} alt0=$zero alt1=$one") }
+        bufferedSize = 0; optionalShortPacketPad = false; frames.clear(); frameTimes.clear(); queuedBytes = 0
+        zero == 0 && one == 0
+    } }
 
     /**
      * Returns the next complete Ethernet frame, or null when [timeoutMillis] elapses without one.
@@ -109,7 +156,9 @@ class NcmUsbBridge internal constructor(
 
             val deadline = System.nanoTime() + timeoutMillis * NANOS_PER_MILLISECOND
             while (true) {
+                val parsing = System.nanoTime()
                 drainFrames()
+                com.shilapi.xcertplay.pioneer.PioneerDiagnostics.record(readQueuedSession, "ntb-parse", System.nanoTime()-parsing)
                 if (frames.isNotEmpty()) return pollFrame()
                 val remainingNanos = deadline - System.nanoTime()
                 if (remainingNanos <= 0) return null
@@ -121,10 +170,13 @@ class NcmUsbBridge internal constructor(
         }
     }
 
-    override fun close() {
+    @Synchronized override fun close() {
         statusRunning.set(false)
         val requestToClose = synchronized(stateLock) {
-            if (closed) return
+            if (closed) {
+                check(cleanupComplete) { "NCM previous cleanup incomplete" }
+                return
+            }
             closed = true
             readRequest
         }
@@ -138,26 +190,34 @@ class NcmUsbBridge internal constructor(
                 Thread.currentThread().interrupt()
             }
         }
-        for (usbInterface in claimedInterfaces.asReversed()) {
-            try {
-                connection.releaseInterface(usbInterface)
-            } catch (_: RuntimeException) {
-                // Best-effort release; the connection close below is authoritative.
+        synchronized(writeLock) {
+            for (usbInterface in claimedInterfaces.asReversed()) {
+                try {
+                    connection.releaseInterface(usbInterface)
+                } catch (_: RuntimeException) {
+                    // Best-effort release; the connection close below is authoritative.
+                }
             }
+            readRequests.close()
+            connection.close()
+            runCatching { requestToClose?.close() }
+            check(readRequests.awaitStopped(1_000)) { "NCM read reaper did not stop" }
+            cleanupComplete = true
         }
-        readRequests.close()
-        connection.close()
-        runCatching { requestToClose?.close() }
     }
 
     private fun drainStatus(endpoint: UsbEndpoint) {
         val buffer = ByteArray(endpoint.maxPacketSize.coerceAtLeast(64))
         var loggedFirst = false
+        var diagnosticBudget = 8
         while (statusRunning.get()) {
             // Short synchronous polls keep this thread out of JNI critical sections most of the time;
             // notifications are rare, small interrupt packets that are only logged.
             val transferred = try {
-                connection.bulkTransfer(endpoint, buffer, buffer.size, STATUS_POLL_TIMEOUT_MILLIS)
+                if (com.shilapi.xcertplay.pioneer.PioneerUsbPolicy.matchesDevice())
+                    com.shilapi.xcertplay.pioneer.PioneerUsbNative.readNotification(
+                        connection.fileDescriptor, endpoint.address, buffer, STATUS_POLL_TIMEOUT_MILLIS)
+                else connection.bulkTransfer(endpoint, buffer, buffer.size, STATUS_POLL_TIMEOUT_MILLIS)
             } catch (_: RuntimeException) {
                 return
             }
@@ -168,6 +228,18 @@ class NcmUsbBridge internal constructor(
                     return
                 }
                 continue
+            }
+            if (transferred >= 8 && (buffer[1].toInt() and 255) == 0) {
+                val value = readU16(buffer, 2)
+                if (value != lastNetworkValue) {
+                    lastNetworkValue = value
+                    com.shilapi.xcertplay.pioneer.PioneerConnectionTrace.mark("ncm-network-notification",
+                        "value=$value interface=${readU16(buffer, 4)}", connectionRunId)
+                }
+            }
+            if (diagnosticBudget-- > 0 && transferred >= 8) {
+                onDiagnostic("NCM_NOTIFICATION bytes=$transferred type=${buffer[1].toInt() and 255} " +
+                    "value=${readU16(buffer, 2)} interface=${readU16(buffer, 4)} dataLength=${readU16(buffer, 6)}")
             }
             if (!loggedFirst) {
                 loggedFirst = true
@@ -280,11 +352,14 @@ class NcmUsbBridge internal constructor(
             throw failSession("NCM frame queue exceeded its bounds")
         }
         frames.addLast(frame)
+        frameTimes.addLast(System.nanoTime())
         queuedBytes += frame.size
     }
 
     private fun pollFrame(): ByteArray {
         val frame = frames.removeFirst()
+        val queued = frameTimes.removeFirst()
+        com.shilapi.xcertplay.pioneer.PioneerDiagnostics.record(readQueuedSession, "ncm-rx-frame-wait", System.nanoTime()-queued)
         queuedBytes -= frame.size
         return frame
     }
@@ -312,6 +387,8 @@ class NcmUsbBridge internal constructor(
                             "fallbackBytes=${queued.fallbackBytes ?: "not_attempted"})",
                     )
                     readQueued = true
+                    readQueuedNs = System.nanoTime()
+                    readQueuedSession = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.sessionId
                     if (queued.fallbackBytes != null) acceptedFallback = queued
                 }
                 current
@@ -339,6 +416,7 @@ class NcmUsbBridge internal constructor(
             } ?: throw failSession("Android returned no NCM read request")
             if (completed !== request) throw failSession("Android completed an unexpected NCM request")
             readQueued = false
+            com.shilapi.xcertplay.pioneer.PioneerDiagnostics.record(readQueuedSession, "usb-rx-inflight-includes-idle", System.nanoTime()-readQueuedNs)
             val transferred = directReadBuffer.position()
             if (transferred <= 0) return null
             directReadBuffer.flip()
@@ -408,10 +486,39 @@ class NcmUsbBridge internal constructor(
             return null
         }
 
+        /**
+         * Builds the claim-failure verdict while the connection is still open, records it, and
+         * returns the exception that carries it. The claim uses `force`, so a refused claim after
+         * every retry is also a refused driver detach.
+         */
+        private fun claimFailure(
+            device: UsbDevice?,
+            connection: UsbDeviceConnection,
+            interfaceId: Int,
+            path: String,
+        ): IphoneUsbException {
+            val verdict = UsbVerdict.forUsbFailure(
+                device = device,
+                connection = connection,
+                claimInterfaceId = interfaceId,
+                targetConfiguration = device?.let { IphoneCarPlayConfiguration.find(it)?.id },
+                switchSucceeded = true,
+                detachAttempted = true,
+                detachFailures = listOf(interfaceId),
+            )
+            UsbSessionDiagnostics.recordVerdict(verdict)
+            UsbVerdict.captureSnapshot(device)?.let { UsbSessionDiagnostics.recordSnapshot(it.summary()) }
+            return IphoneUsbException.DeviceUnavailable(
+                "Android could not claim the $path interface $interfaceId; ${verdict.line}",
+            )
+        }
+
         /** Claims and activates the NCM control/data interfaces; owns the connection on success. */
         fun open(
             connection: UsbDeviceConnection,
             function: NcmFunctionDiscovery.NcmFunction,
+            device: UsbDevice? = null,
+            diagnosticClaim: ((UsbDeviceConnection, UsbInterface) -> Boolean)? = null,
             onDiagnostic: (String) -> Unit = {},
         ): NcmUsbBridge {
             val claimed = ArrayList<UsbInterface>(2)
@@ -425,7 +532,7 @@ class NcmUsbBridge internal constructor(
                 // same interface id, so it must be claimed once and switched with setInterface.
                 val sameInterface = function.control.id == function.data.id
                 val first = if (sameInterface) function.data else function.control
-                val firstClaimed = retryUsbSetup { connection.claimInterface(first, true) }
+                val firstClaimed = retryUsbSetup { diagnosticClaim?.invoke(connection, first) ?: connection.claimInterface(first, true) }
                 Log.i(
                     IphoneCarPlayConfiguration.TAG,
                     "claim iface=${first.id}/${first.alternateSetting} class=${first.interfaceClass}" +
@@ -433,13 +540,11 @@ class NcmUsbBridge internal constructor(
                         " attempts=${firstClaimed ?: USB_SETUP_ATTEMPTS}",
                 )
                 if (firstClaimed == null) {
-                    throw IphoneUsbException.DeviceUnavailable(
-                        "Android could not claim the NCM interface ${first.id}",
-                    )
+                    throw claimFailure(device, connection, first.id, "NCM")
                 }
                 claimed.add(first)
                 if (!sameInterface) {
-                    val dataClaimed = retryUsbSetup { connection.claimInterface(function.data, true) }
+                    val dataClaimed = retryUsbSetup { diagnosticClaim?.invoke(connection, function.data) ?: connection.claimInterface(function.data, true) }
                     Log.i(
                         IphoneCarPlayConfiguration.TAG,
                         "claim iface=${function.data.id}/${function.data.alternateSetting}" +
@@ -447,11 +552,35 @@ class NcmUsbBridge internal constructor(
                             " attempts=${dataClaimed ?: USB_SETUP_ATTEMPTS}",
                     )
                     if (dataClaimed == null) {
-                        throw IphoneUsbException.DeviceUnavailable(
-                            "Android could not claim the NCM data interface ${function.data.id}",
-                        )
+                        throw claimFailure(device, connection, function.data.id, "NCM data")
                     }
                     claimed.add(function.data)
+                }
+                if (com.shilapi.xcertplay.pioneer.PioneerUsbPolicy.matchesDevice()) {
+                    // Observe the NCM function's negotiated state before enabling data.
+                    val alt0 = com.shilapi.xcertplay.pioneer.PioneerUsbNative.setAlternate(
+                        connection.fileDescriptor, function.data.id, 0)
+                    val parameters = ByteArray(28)
+                    val got = connection.controlTransfer(0xa1, 0x80, 0, function.control.id,
+                        parameters, parameters.size, 1_000)
+                    val format = ByteArray(2)
+                    val formatRead = connection.controlTransfer(0xa1, 0x83, 0, function.control.id,
+                        format, format.size, 1_000)
+                    val inputSize = ByteArray(4)
+                    val inputRead = connection.controlTransfer(0xa1, 0x85, 0, function.control.id,
+                        inputSize, inputSize.size, 1_000)
+                    // Directed, broadcast, all-multicast: includes IPv6 neighbor discovery.
+                    val filter = connection.controlTransfer(0x21, 0x43, 0x0e, function.control.id,
+                        null, 0, 1_000)
+                    fun u16(bytes: ByteArray, offset: Int) =
+                        (bytes[offset].toInt() and 255) or ((bytes[offset + 1].toInt() and 255) shl 8)
+                    fun u32(bytes: ByteArray, offset: Int) =
+                        (u16(bytes, offset).toLong() or (u16(bytes, offset + 2).toLong() shl 16))
+                    onDiagnostic("NCM_CLASS_SETUP alt0=$alt0 paramsRc=$got formats=${u16(parameters, 2)} " +
+                        "inMax=${u32(parameters, 4)} outMax=${u32(parameters, 16)} " +
+                        "outDivisor=${u16(parameters, 20)} outRemainder=${u16(parameters, 22)} " +
+                        "outAlignment=${u16(parameters, 24)} formatRc=$formatRead format=${u16(format, 0)} " +
+                        "inputRc=$inputRead inputSize=${u32(inputSize, 0)} packetFilterRc=$filter")
                 }
                 val altSelected = retryUsbSetup { connection.setInterface(function.data) }
                 Log.i(
@@ -472,6 +601,8 @@ class NcmUsbBridge internal constructor(
                     connection,
                     function.bulkOut,
                     function.bulkIn,
+                    // Drain CDC notifications as in the working baseline; native polling avoids
+                    // pinning ART's heap during the target firmware's synchronous USB wait.
                     function.statusIn,
                     claimed,
                     descriptorHostMac,

@@ -14,6 +14,7 @@ import java.security.GeneralSecurityException
  */
 class LockdownPairingClient(
     private val host: Iap2UsbMuxHost,
+    private val onDiagnostic: (String) -> Unit = {},
 ) {
     /**
      * Fetches the two pairing inputs, generates the local record, and sends plaintext Pair.
@@ -29,6 +30,7 @@ class LockdownPairingClient(
         hostId: String,
         systemBuid: String,
         totalTimeoutMillis: Long,
+        keepConnectionWhilePending: Boolean = false,
         isCancelled: () -> Boolean = { false },
     ): PairedRecord {
         require(label.isNotBlank()) { "label must not be blank" }
@@ -67,8 +69,15 @@ class LockdownPairingClient(
                             "hostCert=${it.hostCertificatePem.size} rootCert=${it.rootCertificatePem.size}",
                     )
                 }
+                runCatching { onDiagnostic("LOCKDOWN_PAIR submit attempt=$attempt androidTimeMillis=${System.currentTimeMillis()} certBytes=${record.deviceCertificatePem.size}/${record.hostCertificatePem.size}/${record.rootCertificatePem.size}") }
                 Log.i(TAG, "lockdown pair attempt=$attempt")
-                val response = channel.request(pairRequest(label, record), stepTimeoutMillis(deadline))
+                var response = request(channel, pairRequest(label, record), stepTimeoutMillis(deadline))
+                while (keepConnectionWhilePending && response.errorCodeOrNull() == "PairingDialogResponsePending") {
+                    runCatching { onDiagnostic("LOCKDOWN_TRUST_PENDING keepSameConnection=true attempt=$attempt") }
+                    waitForRetry(deadline, isCancelled)
+                    attempt += 1
+                    response = request(channel, pairRequest(label, record), stepTimeoutMillis(deadline))
+                }
                 checkCancelled(isCancelled)
                 when (val error = response.errorCodeOrNull()) {
                     null -> return PairedRecord(record, response.entries["EscrowBag"].asOptionalData())
@@ -83,6 +92,15 @@ class LockdownPairingClient(
                 waitForRetry(deadline, isCancelled)
             }
         }
+    }
+
+    private fun request(channel: LockdownPlistChannel, message: LockdownPlistValue.Dictionary, timeout: Long): LockdownPlistValue.Dictionary {
+        val action = (message.entries["Request"] as? LockdownPlistValue.Text)?.value
+        val key = (message.entries["Key"] as? LockdownPlistValue.Text)?.value ?: ""
+        runCatching { onDiagnostic("LOCKDOWN_TX request=$action key=$key") }
+        val response = channel.request(message, timeout)
+        runCatching { onDiagnostic("LOCKDOWN_RX request=$action key=$key error=${response.errorCodeOrNull() ?: "none"}") }
+        return response
     }
 
     private fun generatePairRecord(
@@ -130,7 +148,7 @@ class LockdownPairingClient(
         isCancelled: () -> Boolean,
     ) {
         checkCancelled(isCancelled)
-        val response = channel.request(
+        val response = request(channel,
             LockdownPlistValue.Dictionary(
                 linkedMapOf(
                     "Label" to LockdownPlistValue.Text(label),
@@ -154,7 +172,7 @@ class LockdownPairingClient(
         isCancelled: () -> Boolean,
     ): LockdownPlistValue {
         checkCancelled(isCancelled)
-        val response = channel.request(
+        val response = request(channel,
             LockdownPlistValue.Dictionary(
                 linkedMapOf(
                     "Label" to LockdownPlistValue.Text(label),

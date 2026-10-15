@@ -29,7 +29,10 @@ class Iap2WiredControlClient(
         vehicleStatusProvider: VehicleStatusProvider? = null,
         onIncoming: (Iap2Frame) -> Unit = {},
         onProgress: (String) -> Unit = {},
+        retryNetworkReady: () -> Boolean = { false },
+        maxStartRequests: Int = Int.MAX_VALUE,
     ): Iap2WiredControlResult {
+        require(maxStartRequests > 0)
         require(availableCurrentMilliAmps in 0..0xffff) {
             "availableCurrentMilliAmps must be in 0..65535"
         }
@@ -57,17 +60,28 @@ class Iap2WiredControlClient(
 
         var forwardedFrames = 0
         var carPlayStartSessions = 0
+        var nextStartRetry = 0L
+        var startRetries = 0
+        var startRequests = 0
+        var startLimitLogged = false
         val location = Iap2LocationReporter(locationProvider, onProgress)
         val vehicleStatus = Iap2VehicleStatusReporter(vehicleStatusProvider, onProgress)
         try {
             while (true) {
+                if (carPlayStartSessions > 0 && startRetries < 3 && startRequests < maxStartRequests && retryNetworkReady() && System.nanoTime() >= nextStartRetry) {
+                    send(carPlayStartSession(endpoint), deadlineNanos)
+                    startRetries++
+                    startRequests++
+                    nextStartRetry = System.nanoTime() + 5_000_000_000L
+                    onProgress("iap2 tx=0x4301 carplay-start-session retry network-ready count=$startRetries")
+                }
                 val remaining = remainingMillis(deadlineNanos)
                 if (remaining == 0L) {
                     return Iap2WiredControlResult(Iap2WiredControlTerminal.TIMED_OUT, stage, forwardedFrames, carPlayStartSessions)
                 }
                 location.tick { send(it, deadlineNanos) }
                 vehicleStatus.tick { send(it, deadlineNanos) }
-                val pollTimeout = vehicleStatus.pollTimeout(location.pollTimeout(remaining))
+                val pollTimeout = minOf(1_000L, vehicleStatus.pollTimeout(location.pollTimeout(remaining)))
                 val incoming = session.recv(pollTimeout)
                 if (incoming == null) {
                     if (session.isClosed) {
@@ -95,9 +109,15 @@ class Iap2WiredControlClient(
                         onProgress(carPlayAvailabilitySummary(incoming.payload))
                         // LIVI sends its wired answer on every availability notification; do not gate it on
                         // the phone's advertised availability boolean.
+                        if (startRequests >= maxStartRequests) {
+                            if (!startLimitLogged) { onProgress("iap2 start-request limit reached count=$startRequests"); startLimitLogged = true }
+                            continue
+                        }
                         send(carPlayStartSession(endpoint), deadlineNanos)
+                        startRequests++
                         stage = Iap2WiredControlStage.CARPLAY_START_SENT
                         carPlayStartSessions++
+                        nextStartRetry = System.nanoTime() + 3_000_000_000L
                         onProgress("iap2 tx=0x4301 carplay-start-session")
                     }
 

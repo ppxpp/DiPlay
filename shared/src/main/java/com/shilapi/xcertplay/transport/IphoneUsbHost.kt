@@ -69,6 +69,9 @@ class IphoneUsbHost(
     private val matcher: IphoneUsbMatcher,
     private val permissionAction: String = "${context.packageName}.IPHONE_USB_PERMISSION",
     private val onDiagnostic: (String) -> Unit = {},
+    /** Optional diagnostic claim path; production retains the framework implementation. */
+    private val diagnosticClaim: ((UsbDeviceConnection, UsbInterface) -> Boolean)? = null,
+    private val diagnosticSetConfiguration: ((UsbDeviceConnection, UsbConfiguration) -> Boolean)? = null,
 ) {
     private val appContext = context.applicationContext
 
@@ -260,8 +263,20 @@ class IphoneUsbHost(
                     "out=${describeUsbEndpoint(endpoints.first)} " +
                     "in=${describeUsbEndpoint(endpoints.second)}",
             )
-            if (!connection.claimInterface(usbMux, true)) {
-                throw IphoneUsbException.DeviceUnavailable("Android could not claim USBMUX interface 1")
+            if (!claim(connection, usbMux)) {
+                val verdict = UsbVerdict.forUsbFailure(
+                    device = device,
+                    connection = connection,
+                    claimInterfaceId = usbMux.id,
+                    targetConfiguration = configuration.id,
+                    switchSucceeded = true,
+                    detachAttempted = true,
+                    detachFailures = listOf(usbMux.id),
+                )
+                UsbSessionDiagnostics.recordVerdict(verdict)
+                throw IphoneUsbException.DeviceUnavailable(
+                    "Android could not claim USBMUX interface ${usbMux.id}; ${verdict.line}",
+                )
             }
             claimedInterface = usbMux
             return Iap2UsbSession(connection, endpoints.first, endpoints.second, onDiagnostic)
@@ -272,6 +287,9 @@ class IphoneUsbHost(
         }
     }
 
+    private fun claim(connection: UsbDeviceConnection, iface: UsbInterface): Boolean =
+        diagnosticClaim?.invoke(connection, iface) ?: connection.claimInterface(iface, true)
+
     /** Selects [configuration], detaching head-unit drivers that block the switch (#518). */
     private fun selectConfiguration(connection: UsbDeviceConnection, device: UsbDevice, configuration: UsbConfiguration) {
         val interfaces = (0 until device.configurationCount).map(device::getConfiguration)
@@ -280,19 +298,36 @@ class IphoneUsbHost(
         val outcome = UsbConfigurationSelection.select(
             target = configuration.id,
             interfaceIds = interfaces.keys.toList(),
-            setConfiguration = { connection.setConfiguration(configuration) },
-            activeConfiguration = { activeConfiguration(connection) },
+            setConfiguration = { diagnosticSetConfiguration?.invoke(connection, configuration) ?: connection.setConfiguration(configuration) },
+            activeConfiguration = { UsbVerdict.readActiveConfiguration(connection) },
             // A forced claim detaches the kernel driver; the release leaves the interface unbound.
             detach = { id ->
                 val usbInterface = interfaces.getValue(id)
-                connection.claimInterface(usbInterface, true).also { if (it) connection.releaseInterface(usbInterface) }
+                claim(connection, usbInterface).also { if (it) connection.releaseInterface(usbInterface) }
             },
-        ) ?: return
+        )
+        if (outcome == null) {
+            UsbSessionDiagnostics.recordAttempt("USB configuration select target=${configuration.id} ok=true")
+            return
+        }
+        UsbSessionDiagnostics.recordAttempt(outcome.diagnostic())
+        UsbVerdict.captureSnapshot(device)?.let { UsbSessionDiagnostics.recordSnapshot(it.summary()) }
         runCatching { onDiagnostic(outcome.diagnostic()) }
         if (outcome.wrongConfiguration) {
+            val verdict = UsbVerdict.forUsbFailure(
+                device = device,
+                connection = connection,
+                claimInterfaceId = null,
+                targetConfiguration = configuration.id,
+                switchSucceeded = outcome.selected,
+                detachAttempted = outcome.detachAttempted,
+                detachFailures = outcome.detachFailed,
+            )
+            UsbSessionDiagnostics.recordVerdict(verdict)
+            runCatching { onDiagnostic(verdict.line) }
             throw IphoneUsbException.DeviceUnavailable(
                 "Android could not switch the iPhone to USB configuration ${configuration.id} " +
-                    "(still ${outcome.after}); a head-unit driver may hold it",
+                    "(still ${outcome.after}); ${verdict.line}",
             )
         }
         if (!outcome.selected) {
@@ -300,14 +335,15 @@ class IphoneUsbHost(
         }
     }
 
-    /** The iPhone's current configuration value (standard GET_CONFIGURATION), or null if unreadable. */
-    private fun activeConfiguration(connection: UsbDeviceConnection): Int? {
-        val value = ByteArray(1)
-        val read = connection.controlTransfer(
-            USB_STANDARD_DEVICE_IN, GET_CONFIGURATION_REQUEST, 0, 0, value, value.size, CONTROL_TRANSFER_TIMEOUT_MILLIS,
-        )
-        return if (read == value.size) value[0].toInt() and 0xff else null
-    }
+    /** Opens the iPhone briefly and reads the active configuration (standard GET_CONFIGURATION). */
+    fun activeConfiguration(device: UsbDevice): Int? = runCatching {
+        val connection = usbManager.openDevice(device) ?: return@runCatching null
+        try {
+            UsbVerdict.readActiveConfiguration(connection)
+        } finally {
+            connection.close()
+        }
+    }.getOrNull()
 
     private fun requireConfiguredDevice(device: UsbDevice) {
         if (!matcher.matches(device.vendorId, device.productId)) {
@@ -359,8 +395,6 @@ class IphoneUsbHost(
 
     companion object {
         private const val USB_VENDOR_DEVICE_IN = 0xc0
-        private const val USB_STANDARD_DEVICE_IN = 0x80
-        private const val GET_CONFIGURATION_REQUEST = 0x08
         private const val GET_USB_MODE_REQUEST = 0x45
         private const val USB_MODE_RESPONSE_LENGTH = 4
         private const val CARPLAY_CONFIGURATION_REQUEST = 0x52

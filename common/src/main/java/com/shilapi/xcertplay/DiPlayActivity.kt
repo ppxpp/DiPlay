@@ -80,6 +80,7 @@ import com.shilapi.xcertplay.settings.SettingsWidgets
 import com.shilapi.xcertplay.setup.DiLinkGeneration
 import com.shilapi.xcertplay.setup.SetupGuide
 import com.shilapi.xcertplay.transport.EvChargingConnectors
+import com.shilapi.xcertplay.transport.UsbSessionDiagnostics
 import com.shilapi.xcertplay.update.BackgroundUpdateScheduler
 import com.shilapi.xcertplay.update.UpdateApkExport
 import com.shilapi.xcertplay.update.UpdateAvailability
@@ -353,6 +354,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        PioneerDebugIntegration.ensure(this)
         // Back on the home page finishes this activity while the session runs on, so the icon lands here.
         if (savedInstanceState == null && isLauncherIntent(intent) && CarPlayBackgroundSession.hasSession()) {
             openProjection(); finish(); return
@@ -386,7 +388,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         setupStep = savedInstanceState?.getInt("setup_step") ?: SetupGuide.STEP_CAR
         setupFromSettings = savedInstanceState?.getBoolean("setup_from_settings") ?: false
         page = savedInstanceState?.getString("page") ?: intent.getStringExtra("page")
-            ?: if (RemoteGatewaySettings.load(this) == null && setupError == null && SetupGuide.shouldOpenOnLaunch(SetupGuide.seen(this),
+            ?: if (RemoteGatewaySettings.loadSelected(this) == null && setupError == null && SetupGuide.shouldOpenOnLaunch(SetupGuide.seen(this),
                     DiPlayPreferences.phoneAddress(this) != null)) "setup" else "home"
         render()
         scheduleAutomaticVehicleValidation()
@@ -1146,7 +1148,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         active = CarPlayBackgroundSession.active,
         running = CarPlayBackgroundSession.hasSession(),
         wireless = AirPlayPersistence.loadWirelessEnabled(this),
-        phoneChosen = RemoteGatewaySettings.load(this) != null || DiPlayPreferences.phoneAddress(this) != null,
+        phoneChosen = RemoteGatewaySettings.loadSelected(this) != null || DiPlayPreferences.phoneAddress(this) != null,
         hotspotSetupNeeded = AirPlayPersistence.loadWirelessHotspotMode(this) == WirelessHotspotMode.MANUAL &&
             (pendingCarHotspotSetup || hotspotError(storedSsid(), storedPassword()) != null),
     )
@@ -1594,6 +1596,12 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                 saveReportToDownloads()
             }.apply { isEnabled = !exportInProgress }
             card.addView(exportButton, matchButton(10, 60))
+            if (com.shilapi.xcertplay.pioneer.PioneerUsbPolicy.matchesDevice() ||
+                com.shilapi.xcertplay.pioneer.PioneerUsbPolicy.enabled(this)) {
+                card.addView(button(getString(R.string.settings_pioneer_lan_debug), false) {
+                    startActivity(Intent(this, com.shilapi.xcertplay.pioneer.PioneerDebugActivity::class.java))
+                }, matchButton(10, 60))
+            }
             card.addView(button(getString(R.string.choose_save_location), false) { chooseReportDestination() }, matchButton(10, 60))
             val destination = getString(R.string.reports_save_to_downloads_diplay)
             card.addView(label(destination + getString(R.string.nothing_is_sent_automatically_protocol_payloads_and_creden), 14, MUTED).apply { setPadding(0, dp(12), 0, 0) })
@@ -4980,7 +4988,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             return
         }
         if (wireless && carHotspotOff()) { carHotspotOffDialog(); return }
-        if (wireless && RemoteGatewaySettings.load(this) == null && DiPlayPreferences.phoneAddress(this) == null) {
+        if (wireless && RemoteGatewaySettings.loadSelected(this) == null && DiPlayPreferences.phoneAddress(this) == null) {
             pendingWireless = true; choosePhone(); return
         }
         val preferences = getSharedPreferences("diplay", MODE_PRIVATE)
@@ -4992,7 +5000,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         }
         val open = {
             AirPlayPersistence.saveWirelessEnabled(this, wireless)
-            if (wireless && RemoteGatewaySettings.load(this) != null) {
+            if (wireless && RemoteGatewaySettings.loadSelected(this) != null) {
                 AirPlayPersistence.saveMfiTarget(this, com.shilapi.xcertplay.orchestration.MfiTarget.LOCAL)
             }
             openProjection()
@@ -5095,7 +5103,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             setupError != null -> getString(R.string.setup_needs_attention)
             CarPlayBackgroundSession.active -> getString(R.string.carplay_connected)
             running -> getString(R.string.connecting_to_your_iphone)
-            RemoteGatewaySettings.load(this) != null -> getString(R.string.gateway_ready)
+            RemoteGatewaySettings.loadSelected(this) != null -> getString(R.string.gateway_ready)
             DiPlayPreferences.phoneAddress(this) != null -> "${getString(R.string.status_ready_for_prefix)}${DiPlayPreferences.phoneName(this)}"
             else -> getString(R.string.ready_when_you_are)
         }
@@ -5222,6 +5230,9 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                     appendLine()
                     appendLine("--- Recent own-app process exits (Android 11+) ---")
                     appendLine(ProcessExitDiagnostics.report(appContext))
+                    appendLine()
+                    appendLine("--- USB configuration and claim verdict ---")
+                    appendLine(UsbSessionDiagnostics.report())
                     appendLine()
                     for (name in SessionLogFile.REPORT_NAMES) {
                         val file = File(appContext.filesDir, "logs/$name")

@@ -606,8 +606,8 @@
     <string name="settings_usb_charging">Зарядка iPhone</string>
     <string name="settings_usb_charging_normal">Обычная (2,4 А)</string>
     <string name="settings_usb_charging_reduced">Пониженная (1,5 А)</string>
-    <string name="settings_usb_charging_low">Низкая (0,5 А)</string>
-    <string name="settings_usb_charging_description">Ток зарядки, который DiPlay разрешает iPhone по USB. Если проводной CarPlay обрывается каждые несколько секунд и iPhone сам переподключается, USB-порт автомобиля может не выдавать достаточно питания: попробуйте «Пониженная», затем «Низкая». iPhone будет заряжаться медленнее. Применяется при следующем USB-подключении.</string>
+    <string name="settings_usb_charging_low">Низкая (0,5 А, по умолчанию)</string>
+    <string name="settings_usb_charging_description">Ток зарядки, предлагаемый DiPlay устройству iPhone по USB. По умолчанию — 0,5 А; также можно выбрать 1,5 А или 2,4 А в зависимости от питания USB. Применяется при следующем USB-подключении.</string>
     <string name="wheel_joystick_auto_off">Джойстик выключается сам</string>
     <string name="wheel_joystick_auto_off_description">Через 15 секунд без нажатий и когда начинается маршрут кнопки снова управляют музыкой и громкостью.</string>
     <string name="wheel_joystick_on">Джойстик включён</string>
@@ -798,4 +798,5 @@
     <string name="bluetooth_connections_not_real">Bluetooth Android на этом головном устройстве сообщает о подключении, но до iPhone ничего не доходит: «успешно» подключается даже несуществующая служба. Bluetooth здесь обслуживает собственный модуль производителя, недоступный приложениям, поэтому беспроводной CarPlay на этом головном устройстве работать не может. Попробуйте подключение по USB.</string>
     <string name="settings_fce_cluster_guidance">Подсказки на приборной панели FCE (экспериментально)</string>
     <string name="settings_fce_cluster_guidance_description">Показывает стрелки CarPlay и расстояние до следующего манёвра в навигационном виде приборной панели на головных устройствах FCE, записывая данные в сервис автомобиля. Проверено только на одном автомобиле; отключите, если панель ведёт себя необычно.</string>
+    <string name="settings_pioneer_lan_debug">Отладка по локальной сети</string>
 </resources>

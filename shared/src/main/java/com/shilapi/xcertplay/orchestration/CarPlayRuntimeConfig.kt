@@ -164,7 +164,7 @@ class CarPlayRuntimeConfig(
     companion object {
         const val APPLE_VENDOR_ID = 0x05ac
         /** The wired iAP2 charging offer; the iPhone may draw up to this much from the car's USB port. */
-        const val DEFAULT_AVAILABLE_CURRENT_MILLI_AMPS = 2400
+        const val DEFAULT_AVAILABLE_CURRENT_MILLI_AMPS = 500
         val DEFAULT_HOST_MAC = byteArrayOf(0x02, 0x00, 0x00, 0x00, 0x00, 0x02)
         private fun isLinkLocalIpv6(value: String): Boolean {
             if (value.contains('%') || '\u0000' in value || !value.contains(':')) return false

@@ -1,0 +1,5 @@
+<resources>
+    <string name="gateway_use_local_bluetooth">استخدام بلوتوث الجهاز في الاتصال التالي</string>
+    <string name="gateway_transport_local">تم اختيار بلوتوث الجهاز. اختر وضع Wi-Fi في إعدادات الاتصال؛ تسري التغييرات عند الاتصال التالي.</string>
+    <string name="gateway_transport_proxy">تم اختيار وكيل بلوتوث عبر شبكة Wi-Fi الحالية؛ تسري التغييرات عند الاتصال التالي.</string>
+</resources>

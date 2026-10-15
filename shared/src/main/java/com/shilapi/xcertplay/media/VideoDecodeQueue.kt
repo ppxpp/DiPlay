@@ -13,6 +13,8 @@ internal sealed interface VideoJob {
         /** The iPhone's frame time and when the frame arrived (System.nanoTime), 0 when unknown. */
         val senderNanos: Long = 0L,
         val arrivalNanos: Long = 0L,
+        /** Local diagnostic identity, never part of the compressed stream. */
+        val frameId: Long = frameIds.incrementAndGet(),
     ) : VideoJob
     data class SurfaceChanged(val surface: Surface?) : VideoJob
     /** Stop rendering to a surface that is going away; completes [request] once the codec has let go. */
@@ -20,6 +22,7 @@ internal sealed interface VideoJob {
     /** Ask the iPhone for a keyframe, so a surface that just came back gets a picture without waiting for motion. */
     data object RefreshPicture : VideoJob
     data object Resync : VideoJob
+    companion object { private val frameIds = java.util.concurrent.atomic.AtomicLong() }
 }
 
 /** Do not resume dependent pictures after losing a reference frame. */
@@ -41,6 +44,12 @@ internal class VideoDecodeQueue(
     private val jobs = LinkedBlockingQueue<VideoJob>()
 
     data class Backlog(val pendingFrames: Int, val newestPendingReceivedNs: Long?)
+
+    data class Snapshot(val frames: Int, val bytes: Long, val oldestNs: Long)
+    @Synchronized fun snapshot(): Snapshot {
+        val frames = jobs.filterIsInstance<VideoJob.Frame>()
+        return Snapshot(frames.size, frames.sumOf { it.nalus.size.toLong() }, frames.firstOrNull()?.receivedNs ?: 0)
+    }
 
     /** Called by the sole consumer after taking its current frame. Control jobs end this chain. */
     @Synchronized fun backlogAfterCurrent(): Backlog {

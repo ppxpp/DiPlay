@@ -21,6 +21,8 @@ class VideoSettingsChannel(
     private val writeKey: ByteArray,
     private val log: (String) -> Unit,
 ) : Closeable {
+    private val lwipSession = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.sessionId
+    private var portLease: Closeable? = null
     private val closed = AtomicBoolean(false)
     private var server: ServerSocket? = null
     private var socket: Socket? = null
@@ -33,6 +35,8 @@ class VideoSettingsChannel(
             bind(InetSocketAddress(bindAddress, 0))
         }
         server = bound
+        try { portLease = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.registerPort(bound.localPort, false, lwipSession) }
+        catch (error: Throwable) { bound.close(); throw error }
         Thread({ accept(bound) }, "diplay-video-settings").apply { isDaemon = true }.start()
         return bound.localPort
     }
@@ -103,6 +107,7 @@ class VideoSettingsChannel(
         if (!closed.compareAndSet(false, true)) return
         runCatching { socket?.close() }
         runCatching { server?.close() }
+        runCatching { portLease?.close() }; portLease = null
     }
 
     private fun u32(b: ByteArray, o: Int) =

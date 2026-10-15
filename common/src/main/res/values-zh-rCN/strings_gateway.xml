@@ -17,7 +17,9 @@
     <string name="gateway_pairing_rejected">配对失败，请检查配对信息并确认 A 当前可用。</string>
     <string name="gateway_wifi_required">请先在 DiPlay 连接设置中保存当前 Wi-Fi 的名称和密码。</string>
     <string name="gateway_ready">已选择代理设备 · 可以连接</string>
-    <string name="gateway_check_connection">检查代理连接</string>
-    <string name="gateway_direct_connected">代理已连通 · %1$s:%2$d\nTCP 连接、授权和身份校验通过。点击下方按钮连接 CarPlay。</string>
-    <string name="gateway_direct_failed">代理连接失败 · %1$s:%2$d\n%3$s</string>
+    <string name="gateway_ports_broadcast">端口使用 · 发现源 %1$d → 代理 UDP %2$d\n数据连接 → 代理 TCP %3$s:%4$d</string>
+    <string name="gateway_ports_nsd">端口使用 · 发现源 NSD\n数据连接 → 代理 TCP %1$s:%2$d</string>
+    <string name="gateway_use_local_bluetooth">下次连接使用本机蓝牙</string>
+    <string name="gateway_transport_local">已选择本机蓝牙。Wi-Fi 模式在连接设置中选择；下次连接生效。</string>
+    <string name="gateway_transport_proxy">已选择蓝牙代理，通过现有 Wi-Fi 连接；下次连接生效。</string>
 </resources>

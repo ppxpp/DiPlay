@@ -30,6 +30,8 @@ class IapTunnel(
         fun onClosed(cause: Throwable?) {}
     }
 
+    private val lwipSession = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.sessionId
+    private var portLease: Closeable? = null
     private val closed = AtomicBoolean(false)
     private val readCounter = AtomicLong(0)
     private val bindAddress =
@@ -44,6 +46,8 @@ class IapTunnel(
         this.listener = listener
         val bound = bindAny()
         servers += bound
+        try { portLease = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.registerPort(bound.localPort, false, lwipSession) }
+        catch (error: Throwable) { close(); throw error }
         listener.onDebug("AirPlay iAP tunnel listener bound=${bound.localSocketAddress}")
         val secondaryAddress = if (bindAddress is java.net.Inet6Address) {
             InetAddress.getByName("0.0.0.0")
@@ -102,6 +106,7 @@ class IapTunnel(
         safeClose(socket)
         servers.toList().forEach(::safeClose)
         servers.clear()
+        safeClose(portLease); portLease = null
         threads.toList().forEach(Thread::interrupt)
         threads.clear()
         peerConnected.countDown()

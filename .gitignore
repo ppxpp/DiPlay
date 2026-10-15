@@ -18,6 +18,9 @@ captures/
 # Local agent working notes
 /agent_docs/
 
+# Local device captures, diagnostic archives, and build evidence
+/evidence/
+
 # OS files
 .DS_Store
 Thumbs.db

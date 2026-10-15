@@ -17,7 +17,9 @@
     <string name="gateway_pairing_rejected">Pairing failed. Check the pairing information and that A is available.</string>
     <string name="gateway_wifi_required">Save the current Wi-Fi name and password in DiPlay connection settings first.</string>
     <string name="gateway_ready">Selected proxy · ready to connect</string>
-    <string name="gateway_check_connection">Check proxy connection</string>
-    <string name="gateway_direct_connected">Proxy reachable · %1$s:%2$d\nTCP connection, authorization and identity verified. Tap below to connect CarPlay.</string>
-    <string name="gateway_direct_failed">Proxy connection failed · %1$s:%2$d\n%3$s</string>
+    <string name="gateway_ports_broadcast">Ports · discovery source %1$d → proxy UDP %2$d\nData connection → proxy TCP %3$s:%4$d</string>
+    <string name="gateway_ports_nsd">Ports · discovery source NSD\nData connection → proxy TCP %1$s:%2$d</string>
+    <string name="gateway_use_local_bluetooth">Use built-in Bluetooth next time</string>
+    <string name="gateway_transport_local">Selected: built-in Bluetooth. Wi-Fi mode is chosen in connection settings; changes apply to the next connection.</string>
+    <string name="gateway_transport_proxy">Selected: Bluetooth proxy on existing Wi-Fi. Changes apply to the next connection.</string>
 </resources>

@@ -1,0 +1,5 @@
+<resources>
+    <string name="gateway_use_local_bluetooth">Использовать встроенный Bluetooth в следующий раз</string>
+    <string name="gateway_transport_local">Выбран встроенный Bluetooth. Режим Wi-Fi задаётся в настройках подключения; изменения вступят в силу при следующем подключении.</string>
+    <string name="gateway_transport_proxy">Выбран Bluetooth-прокси через текущую сеть Wi-Fi. Изменения вступят в силу при следующем подключении.</string>
+</resources>

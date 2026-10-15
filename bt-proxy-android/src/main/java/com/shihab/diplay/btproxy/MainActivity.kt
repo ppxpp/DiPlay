@@ -34,11 +34,15 @@ class MainActivity : Activity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val probe = BluetoothProbe(::appendLog)
     private lateinit var gatewayStatus: TextView
+    private lateinit var portsView: TextView
     private val gatewayPreferences by lazy { getSharedPreferences("gateway", MODE_PRIVATE) }
     private val refreshGateway = object : Runnable {
         override fun run() {
             if (destroyed) return
             gatewayStatus.text = gatewayPreferences.getString("status", "等待自动启动")
+            val ports = gatewayPreferences.getString("ports", "").orEmpty()
+            portsView.text = if (ports.isEmpty()) "" else getString(R.string.communication_ports, ports)
+            portsView.visibility = if (ports.isEmpty()) View.GONE else View.VISIBLE
             logView.text = runCatching { File(filesDir, "probe-log.txt").readText() }.getOrDefault("")
             mainHandler.postDelayed(this, 1000)
         }
@@ -94,6 +98,8 @@ class MainActivity : Activity() {
         content.addView(statusView)
         gatewayStatus = TextView(this).apply { textSize = 16f }
         content.addView(gatewayStatus)
+        portsView = TextView(this).apply { textSize = 14f }
+        content.addView(portsView)
         content.addView(Button(this).apply {
             setText(R.string.gateway_pairing_information)
             setOnClickListener { showPairingInformation() }
@@ -168,6 +174,10 @@ class MainActivity : Activity() {
         addButton(R.string.copy_log) {
             getSystemService(ClipboardManager::class.java).setPrimaryClip(
                 ClipData.newPlainText("Bluetooth probe", logView.text))
+        }
+        addButton(R.string.clear_log) {
+            ProxyLog.clear(this)
+            logView.text = runCatching { File(filesDir, "probe-log.txt").readText() }.getOrDefault("")
         }
         addButton(R.string.start_gateway) {
             withSelectedDevice { device ->

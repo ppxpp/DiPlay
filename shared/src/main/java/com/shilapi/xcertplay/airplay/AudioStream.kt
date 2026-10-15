@@ -45,6 +45,9 @@ class AudioStream(
         ) {}
     }
 
+    private val lwipSession = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.sessionId
+    private var dataLease: Closeable? = null
+    private var controlLease: Closeable? = null
     private val closed = AtomicBoolean(false)
     private val receivedPackets = AtomicInteger()
     private val decryptedPackets = AtomicInteger()
@@ -69,6 +72,10 @@ class AudioStream(
         val control = CarFirewallPorts.udpSocket(null, null)
         dataSocket = data
         controlSocket = control
+        try {
+            dataLease = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.registerPort(data.localPort, true, lwipSession)
+            controlLease = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.registerPort(control.localPort, true, lwipSession)
+        } catch (error: Throwable) { close(); throw error }
         dataThread = Thread({ runData(data, listener) }, "airplay-audio-rx").apply {
             isDaemon = true
             start()
@@ -84,6 +91,8 @@ class AudioStream(
         if (!closed.compareAndSet(false, true)) return
         dataSocket?.close()
         controlSocket?.close()
+        dataLease?.close(); dataLease = null
+        controlLease?.close(); controlLease = null
         dataThread?.interrupt()
         controlThread?.interrupt()
     }
@@ -133,9 +142,13 @@ class AudioStream(
                 val nonce = ByteArray(12).also { shortNonce.copyInto(it, 4) }
                 val sample = readU32Be(wire, 4)
 
+                val decryptStart = System.nanoTime()
                 val payload = try {
-                    AirPlayCrypto.chachaOpen(key, nonce, sealed, aad)
+                    AirPlayCrypto.chachaOpen(key, nonce, sealed, aad).also {
+                        com.shilapi.xcertplay.pioneer.PioneerDiagnostics.record(lwipSession, "audio-decrypt-$streamType", System.nanoTime()-decryptStart)
+                    }
                 } catch (error: Exception) {
+                    com.shilapi.xcertplay.pioneer.PioneerDiagnostics.record(lwipSession, "audio-decrypt-$streamType", System.nanoTime()-decryptStart, true)
                     val failureNumber = authenticationFailures.incrementAndGet()
                     if (failureNumber == 1) {
                         android.util.Log.w(

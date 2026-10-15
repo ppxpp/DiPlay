@@ -28,10 +28,17 @@ class GatewayService : Service() {
     } }
     private var targetAddress: String? = null
     private var previousStatus: String? = null
+    private var previousPorts: String? = null
     private val retry = object : Runnable {
         override fun run() {
             ensureRunning()
             handler.postDelayed(this, 5000)
+        }
+    }
+    private val portsTick = object : Runnable {
+        override fun run() {
+            publishPorts()
+            handler.postDelayed(this, 1000)
         }
     }
 
@@ -53,8 +60,17 @@ class GatewayService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         handler.removeCallbacks(retry)
+        handler.removeCallbacks(portsTick)
         retry.run()
+        portsTick.run()
         return START_STICKY
+    }
+
+    private fun publishPorts() {
+        val ports = runCatching { gateway.endpointSummary() }.getOrNull().orEmpty()
+        if (previousPorts == ports) return
+        previousPorts = ports
+        getSharedPreferences("gateway", MODE_PRIVATE).edit().putString("ports", ports).apply()
     }
 
     private fun ensureRunning() {
@@ -94,7 +110,8 @@ class GatewayService : Service() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         gateway.close()
-        getSharedPreferences("gateway", MODE_PRIVATE).edit().putString("status", "代理已停止").apply()
+        getSharedPreferences("gateway", MODE_PRIVATE).edit()
+            .putString("status", "代理已停止").putString("ports", "").apply()
         super.onDestroy()
     }
 

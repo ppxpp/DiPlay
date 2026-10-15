@@ -33,6 +33,8 @@ class ScreenStream(private val key: ByteArray, private val onDiagnostic: (String
         fun onClosed(cause: Throwable?) {}
     }
 
+    private val lwipSession = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.sessionId
+    private var portLease: Closeable? = null
     private val closed = AtomicBoolean(false)
     private val frameCounter = AtomicLong(0)
     private val firstFrameLogged = AtomicBoolean(false)
@@ -47,6 +49,8 @@ class ScreenStream(private val key: ByteArray, private val onDiagnostic: (String
         bound.reuseAddress = true
         bound.bind(InetSocketAddress(InetAddress.getByName("::"), 0))
         server = bound
+        try { portLease = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.registerPort(bound.localPort, false, lwipSession) }
+        catch (error: Throwable) { bound.close(); throw error }
         thread = Thread({ accept(bound) }, "airplay-screen").apply { isDaemon = true; start() }
         return bound.localPort
     }
@@ -78,6 +82,7 @@ class ScreenStream(private val key: ByteArray, private val onDiagnostic: (String
         if (!closed.compareAndSet(false, true)) return
         safeClose(socket)
         safeClose(server)
+        safeClose(portLease); portLease = null
         thread?.interrupt()
     }
 
@@ -98,10 +103,14 @@ class ScreenStream(private val key: ByteArray, private val onDiagnostic: (String
             val input = inputOverride ?: sock.getInputStream()
             while (!closed.get()) {
                 stats.reading()
+                val headerStarted = System.nanoTime()
                 val header = readFully(input, HEADER_LEN) ?: break
+                com.shilapi.xcertplay.pioneer.PioneerDiagnostics.record(lwipSession, "video-header-read", System.nanoTime()-headerStarted)
                 val bodySize = readU32Le(header, 0)
                 if (bodySize > MAX_BODY) break
+                val bodyStarted = System.nanoTime()
                 val body = readFully(input, bodySize) ?: break
+                com.shilapi.xcertplay.pioneer.PioneerDiagnostics.record(lwipSession, "video-payload-read", System.nanoTime()-bodyStarted)
                 val arrivalNanos = System.nanoTime()
                 stats.received(HEADER_LEN + bodySize)
                 onMessage(header, body, stats, arrivalNanos)
@@ -124,6 +133,7 @@ class ScreenStream(private val key: ByteArray, private val onDiagnostic: (String
                     val start = System.nanoTime()
                     ScreenCodec.decryptFrame(key, frameCounter.get(), header, body)
                         .also {
+                            com.shilapi.xcertplay.pioneer.PioneerDiagnostics.record(lwipSession, "video-decrypt", System.nanoTime()-start)
                             stats.decrypted(System.nanoTime() - start, body.size)
                             frameCounter.incrementAndGet()
                         }
@@ -137,7 +147,12 @@ class ScreenStream(private val key: ByteArray, private val onDiagnostic: (String
                         "head=${payload.hexPrefix(16)} chacha=${AirPlayCrypto.chachaImplementation}",
                     )
                 }
-                listener.onFrame(ScreenCodec.lengthPrefixedToAnnexB(payload), ScreenCodec.senderNanos(header), arrivalNanos)
+                val convertStart = System.nanoTime()
+                val annexB = ScreenCodec.lengthPrefixedToAnnexB(payload)
+                com.shilapi.xcertplay.pioneer.PioneerDiagnostics.record(lwipSession, "video-annexb", System.nanoTime()-convertStart)
+                val submitStart = System.nanoTime()
+                listener.onFrame(annexB, ScreenCodec.senderNanos(header), arrivalNanos)
+                com.shilapi.xcertplay.pioneer.PioneerDiagnostics.record(lwipSession, "video-submit", System.nanoTime()-submitStart)
             }
             OP_VIDEO_CONFIG -> {
                 val (codec, codecData) = ScreenCodec.detectConfig(body)

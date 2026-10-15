@@ -91,7 +91,7 @@ class RemoteRfcommDuplexStream private constructor(
                 val opened = RemoteRfcommProtocol.read(input)
                 if (opened.type != RemoteRfcommProtocol.OPEN_OK) throw IOException("Gateway open failed: ${opened.payload.decodeToString()}")
                 socket.soTimeout = 0
-                onDiagnostic("Remote RFCOMM connected gateway=$host:$port")
+                onDiagnostic("Remote RFCOMM connected gateway=$host:$port localPort=${socket.localPort}")
                 return RemoteRfcommDuplexStream(socket, mac, input, output, onDiagnostic)
             } catch (error: Throwable) {
                 runCatching { socket.close() }

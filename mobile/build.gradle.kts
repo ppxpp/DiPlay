@@ -20,8 +20,8 @@ android {
         applicationId = "com.gtmc.app.fengyunyx.b819"
         minSdk = 23
         targetSdk = 37
-        versionCode = 37
-        versionName = "0.2.18"
+        versionCode = 63
+        versionName = "0.2.28-car-video-tuning"
 
     }
 

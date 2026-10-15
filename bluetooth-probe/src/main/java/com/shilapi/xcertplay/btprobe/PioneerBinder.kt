@@ -8,14 +8,16 @@ import android.os.Parcel
 internal class PioneerBinder(private val log: (String) -> Unit) {
     companion object {
         const val SERVICE = "jp.pioneer.ceam.Blueforce.manage"
+        private const val FIRMWARE =
+            "Android/tamago_3T_uart/tamago_3T_uart:7.1.2/2.0.0-rfp-rc6/1:user/release-keys"
+        fun firmwareKnown(): Boolean = Build.FINGERPRINT == FIRMWARE
         fun service(name: String): IBinder? = Class.forName("android.os.ServiceManager")
             .getMethod("getService", String::class.java).invoke(null, name) as? IBinder
     }
     private fun binder(): IBinder = service(SERVICE)?.also {
         check(it.interfaceDescriptor == SERVICE) { "先锋服务描述符不匹配" }
     } ?: error("先锋蓝牙服务不存在")
-    fun firmwareKnown(): Boolean = Build.FINGERPRINT ==
-        "Android/tamago_3T_uart/tamago_3T_uart:7.1.2/2.0.0-rfp-rc6/1:user/release-keys"
+    fun firmwareKnown(): Boolean = Companion.firmwareKnown()
     fun query(code: Int, vararg args: Int): List<Int> {
         check(code in setOf(67, 78, 79, 80, 81, 134, 141)) { "不是已确认的查询接口" }
         return transact(code, *args)

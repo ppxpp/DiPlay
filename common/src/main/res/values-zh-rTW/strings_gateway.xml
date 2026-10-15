@@ -1,0 +1,5 @@
+<resources>
+    <string name="gateway_use_local_bluetooth">下次連線使用本機藍牙</string>
+    <string name="gateway_transport_local">已選擇本機藍牙。Wi-Fi 模式在連線設定中選擇；下次連線生效。</string>
+    <string name="gateway_transport_proxy">已選擇藍牙代理，透過現有 Wi-Fi 連線；下次連線生效。</string>
+</resources>

@@ -595,6 +595,7 @@ class CarPlayMediaEngine(
         val port = (stream["dataPort"] as? Number)?.toInt() ?: return null
         if (port !in 1..65535) return null
         val host = session.remoteAddress ?: return null
+        com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.registerPeerUdp(host, port, session.lwipSession)
         val key = dataStreamKey(session, stream, DATASTREAM_INPUT_KEY) ?: return null
         val formatBits = (stream["audioFormat"] as? Number)?.toLong() ?: 0L
         val framesPerPacket = (stream["framesPerPacket"] as? Number)?.toInt() ?: 0

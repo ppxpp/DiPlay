@@ -43,6 +43,8 @@ internal class MicrophoneUplink(
         )
     },
 ) : Closeable {
+    private val lwipSession = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.sessionId
+    private var portLease: Closeable? = null
     private val running = AtomicBoolean(false)
     private val stats = MicrophoneCaptureStats(config, report = { message ->
         Log.i(TAG, message)
@@ -138,6 +140,7 @@ internal class MicrophoneUplink(
         socket = nextSocket
         opusEncoder = nextEncoder
         return try {
+            portLease = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.registerPort(nextSocket.localPort, true, lwipSession)
             if (config.audioType == "telephony") {
                 echoCanceller = createEchoCanceller()
                 if (!speakerphoneCall) effects = voiceEffects(nextRecorder.audioSessionId)
@@ -453,6 +456,7 @@ internal class MicrophoneUplink(
         } catch (_: Exception) {
             // Best effort.
         }
+        runCatching { portLease?.close() }; portLease = null
         val currentEncoder = opusEncoder
         opusEncoder = null
         currentEncoder?.close()

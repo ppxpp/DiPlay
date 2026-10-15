@@ -31,6 +31,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":pioneer-adapter"))
     coreLibraryDesugaring(libs.desugar.jdk.libs)
     api(project(":shared"))
     implementation(platform(libs.androidx.compose.bom))

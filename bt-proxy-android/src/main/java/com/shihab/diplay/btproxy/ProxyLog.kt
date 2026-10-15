@@ -17,4 +17,9 @@ object ProxyLog {
             file.writeText((previous + line).joinToString("\n") + "\n")
         }
     }
+
+    @Synchronized fun clear(context: Context) {
+        runCatching { File(context.filesDir, "probe-log.txt").writeText("") }
+        append(context, "phase=LOG event=CLEARED")
+    }
 }
