@@ -121,3 +121,12 @@ TCP 与无线 CarPlay 共用车机有限的允许端口。虽然优先选择 872
 ### 网络诊断补充版（versionCode 39）
 
 `0.2.18-pioneer-usb2-hud-test` 把 NCM IPv6 收发包摘要同步到会话日志，status 增加 networkCounters 和 ipv6Sockets，用于区分 USB 收包、VPN 转发与 AirPlay 接受连接。包日志沿用有限记录预算与会话日志脱敏。
+
+
+### 音乐连续性对照（v74 起）
+
+`audio-clock-trim --mode OFF` 将目标先锋车机的媒体 AudioTrack 恢复为音源采样率；`ON` 恢复上游速度校正。仅用于已识别车机的同会话单变量对照，不保存偏好，进程重启恢复设备默认：v77 起仅已识别的 SABRESD_MX6DQ/tamago/API25 车机有线 LWIP 会话默认固定音源速率，其他设备和连接路径仍默认开启上游校正。v76 的设备级默认曾覆盖该车机无线模式，v77收窄此范围。实测对照见[续测记录](../2026-10-16-车机音乐连续性与视频低延迟续测记录.md)。`status.audioClockTrimEnabled` 是当前有效状态，`audioClockTrimOverride` 为 `null` 时表示自动默认，布尔值表示运行时覆盖；实际生效须同时检查 `Audio: clock trim comparison` 的 `resetResult=0` 和下一窗口 `Audio: io stats` 的 `actualPlaybackRate`。
+
+先保持同一音乐、缓冲、100% 分辨率及 60 帧设置采集数分钟，再按 ON → OFF → ON 比较，每段用完整 `export` 保存报告。新 `Audio: io stats` 分别记录收到的 RTP 总字节（含头部）、送入写入函数的 PCM 字节、AudioTrack 接受的字节、未写完字节与退出原因；RTP 和 PCM 字节不可直接相减。PCM 应满足 `pcmBytes = writtenBytes + unwrittenBytes`，停止会话的末尾窗口单独统计。`stall-timeout` 表示连续零写入达到现有约 250ms 上限，`error-*` 为 AudioTrack 错误，另区分停止、线程中断、异常和无 track。
+
+比较供给不足、重新缓冲、未写完字节及队列趋势；固定速率即使减少断音，若延迟持续增加也不能通过验收。开关不会改变缓存裁剪、反馈进度或重新缓冲策略。

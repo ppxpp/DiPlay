@@ -71,7 +71,7 @@ def main():
     commands.add_parser("network", help="读取 IPv6/TUN 内核计数、路由与可读防火墙规则")
     commands.add_parser("runtime", help="读取本进程CPU、线程及Logcat；不执行远程shell")
     commands.add_parser("system-load", help="只读系统进程CPU计数、温度及解码能力")
-    for name in ("async-session-logs", "freescale-reorder"):
+    for name in ("async-session-logs", "freescale-reorder", "audio-clock-trim"):
         item = commands.add_parser(name)
         item.add_argument("--mode", choices=["ON", "OFF"], required=True)
     coalescing = commands.add_parser("touch-coalescing", help="仅已知车机：相邻未发送MOVE合并对照")
@@ -128,7 +128,7 @@ def main():
                     break
                 time.sleep(1)
         else:
-            fields = {"mode": args.mode} if args.cmd in ("usb-mode", "usb-configuration", "network-backend", "lwip-diagnostics", "phone-diagnostics", "native-crypto", "video-priority", "touch-coalescing", "async-session-logs", "freescale-reorder") else {}
+            fields = {"mode": args.mode} if args.cmd in ("usb-mode", "usb-configuration", "network-backend", "lwip-diagnostics", "phone-diagnostics", "native-crypto", "video-priority", "touch-coalescing", "async-session-logs", "freescale-reorder", "audio-clock-trim") else {}
             if args.cmd == "lwip-poll-wait": fields = {"millis": args.millis}
             if args.cmd == "video-gesture": fields = {"kind": args.kind}
             if args.cmd == "video-tap": fields = {"x": args.x, "y": args.y}

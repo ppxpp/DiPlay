@@ -1901,6 +1901,12 @@ private class AudioRenderer(
     private var outputBuffers = 0
     private var firstPcmLogged = false
     private val packetsReceived = AtomicInteger()
+    private val receivedBytes = AtomicLong()
+    private var pcmBytesThisWindow = 0L
+    private var writtenBytesThisWindow = 0L
+    private var unwrittenBytesThisWindow = 0L
+    private val writeExitCounts = linkedMapOf<String, Int>()
+    private var clockTrimApplied = true
     private val packetsDropped = AtomicInteger()
     private val lastArrivalNs = AtomicLong()
     private val maxArrivalGapMs = AtomicLong()
@@ -1945,6 +1951,7 @@ private class AudioRenderer(
     fun submit(rtp: ByteArray, sample: Int) {
         if (started) {
             packetsReceived.incrementAndGet()
+            receivedBytes.addAndGet(rtp.size.toLong())
             val now = System.nanoTime()
             val previous = lastArrivalNs.getAndSet(now)
             if (previous != 0L) maxArrivalGapMs.accumulateAndGet((now - previous) / 1_000_000L, ::maxOf)
@@ -2514,7 +2521,12 @@ private class AudioRenderer(
     }
 
     private fun writePcm(data: ByteArray, offset: Int = 0, length: Int = data.size) {
-        val track = track ?: return
+        pcmBytesThisWindow += length
+        val track = track ?: run {
+            unwrittenBytesThisWindow += length
+            writeExitCounts["no-track"] = (writeExitCounts["no-track"] ?: 0) + 1
+            return
+        }
         diagnosticStage = "track-write"
         if (!firstPcmLogged && length > 0) {
             firstPcmLogged = true
@@ -2523,73 +2535,87 @@ private class AudioRenderer(
                 "audio first PCM type=${format.payloadType} bytes=$length",
             )
         }
-        voiceFilter?.process(data, offset, length)
-        if (!fadeApplied) {
-            applyFadeIn(data, offset, length)
-            fadeApplied = true
-        }
         var written = 0
         var stalledSinceNs = 0L
-        while (written < length && running) {
-            // Long-running PCM writes may span several slider adjustments.
-            applyNavigationAttenuation()
-            val writeLength = if (playbackStarted) {
-                length - written
-            } else {
-                minOf(length - written, PREBUFFER_WRITE_CHUNK_BYTES)
+        var exitReason = "stopped"
+        try {
+            voiceFilter?.process(data, offset, length)
+            if (!fadeApplied) {
+                applyFadeIn(data, offset, length)
+                fadeApplied = true
             }
-            val writeStarted = System.nanoTime()
-            diagnosticStage = "track-write"
-            // A vehicle policy can require bounded writes while its output bus is inactive.
-            val count = track.write(data, offset + written, writeLength,
-                if (VehicleAudioRouting.selected.nonBlockingWrites) AudioTrack.WRITE_NON_BLOCKING else AudioTrack.WRITE_BLOCKING)
-            com.shilapi.xcertplay.pioneer.PioneerDiagnostics.record(lwipSession, "audio-track-write-${format.audioType}", System.nanoTime()-writeStarted, count < writeLength)
-            maxWriteMs = maxOf(maxWriteMs, (System.nanoTime() - writeStarted) / 1_000_000L)
-            if (count < 0) {
-                writeErrorsThisWindow++
-                lastWriteErrorCode = count
-                break
-            }
-            if (count == 0) {
-                zeroWritesThisWindow++
-                if (VehicleAudioRouting.selected.nonBlockingWrites) {
-                    if (stalledSinceNs == 0L) stalledSinceNs = System.nanoTime()
-                    if (System.nanoTime() - stalledSinceNs < 250_000_000L) {
-                        Thread.sleep(5)
-                        continue
+            while (written < length && running) {
+                // Long-running PCM writes may span several slider adjustments.
+                applyNavigationAttenuation()
+                val writeLength = if (playbackStarted) {
+                    length - written
+                } else {
+                    minOf(length - written, PREBUFFER_WRITE_CHUNK_BYTES)
+                }
+                val writeStarted = System.nanoTime()
+                diagnosticStage = "track-write"
+                // A vehicle policy can require bounded writes while its output bus is inactive.
+                val count = track.write(data, offset + written, writeLength,
+                    if (VehicleAudioRouting.selected.nonBlockingWrites) AudioTrack.WRITE_NON_BLOCKING else AudioTrack.WRITE_BLOCKING)
+                com.shilapi.xcertplay.pioneer.PioneerDiagnostics.record(lwipSession, "audio-track-write-${format.audioType}", System.nanoTime()-writeStarted, count < writeLength)
+                maxWriteMs = maxOf(maxWriteMs, (System.nanoTime() - writeStarted) / 1_000_000L)
+                if (count < 0) {
+                    writeErrorsThisWindow++
+                    lastWriteErrorCode = count
+                    exitReason = "error-$count"
+                    break
+                }
+                if (count == 0) {
+                    zeroWritesThisWindow++
+                    if (VehicleAudioRouting.selected.nonBlockingWrites) {
+                        if (stalledSinceNs == 0L) stalledSinceNs = System.nanoTime()
+                        if (System.nanoTime() - stalledSinceNs < 250_000_000L) {
+                            Thread.sleep(5)
+                            continue
+                        }
+                    }
+                    exitReason = if (VehicleAudioRouting.selected.nonBlockingWrites) "stall-timeout" else "zero-write"
+                    break
+                }
+                stalledSinceNs = 0L
+                if (count < writeLength) partialWritesThisWindow++
+                val framesWritten = count / frameBytes
+                if (ambientMedia && AmbientMusicController.wantsPcm(ambientRendererToken)) {
+                    ambientEnvelope.append(totalWrittenFrames, framesWritten.toLong(),
+                        AmbientMusicEnvelope.pcmRms(data, offset + written, count),
+                        ambientBass.rms(data, offset + written, count))
+                }
+                written += count
+                writtenBytesThisWindow += count
+                totalWrittenFrames += framesWritten
+                writtenFramesThisWindow += framesWritten
+                bufferProgress.written(count)
+                lastPcmWriteNs = System.nanoTime()
+                if (playbackStarted) reportNavigationPlayback(track)
+                if (playbackStarted) trimClock(track)
+                if (!playbackStarted) {
+                    prebufferBytes += count
+                    if (prebufferBytes >= startThresholdBytes) {
+                        startPlayback(track)
+                        Log.i(TAG, "audio playback started type=${format.payloadType}")
                     }
                 }
-                break
-            }
-            stalledSinceNs = 0L
-            if (count < writeLength) partialWritesThisWindow++
-            val framesWritten = count / frameBytes
-            if (ambientMedia && AmbientMusicController.wantsPcm(ambientRendererToken)) {
-                ambientEnvelope.append(totalWrittenFrames, framesWritten.toLong(),
-                    AmbientMusicEnvelope.pcmRms(data, offset + written, count),
-                    ambientBass.rms(data, offset + written, count))
-            }
-            written += count
-            totalWrittenFrames += framesWritten
-            writtenFramesThisWindow += framesWritten
-            bufferProgress.written(count)
-            lastPcmWriteNs = System.nanoTime()
-            if (playbackStarted) reportNavigationPlayback(track)
-            if (playbackStarted) trimClock(track)
-            if (!playbackStarted) {
-                prebufferBytes += count
-                if (prebufferBytes >= startThresholdBytes) {
-                    startPlayback(track)
-                    Log.i(TAG, "audio playback started type=${format.payloadType}")
+                echoReference?.let { reference ->
+                    val pending = if (playbackStarted) {
+                        totalWrittenFrames - (track.playbackHeadPosition.toLong() and 0xffffffffL)
+                    } else {
+                        null
+                    }
+                    reference.append(data, offset + written - count, count, pcmChannels, pending, System.nanoTime())
                 }
             }
-            echoReference?.let { reference ->
-                val pending = if (playbackStarted) {
-                    totalWrittenFrames - (track.playbackHeadPosition.toLong() and 0xffffffffL)
-                } else {
-                    null
-                }
-                reference.append(data, offset + written - count, count, pcmChannels, pending, System.nanoTime())
+        } catch (error: Throwable) {
+            exitReason = if (error is InterruptedException) "interrupted" else "exception"
+            throw error
+        } finally {
+            if (written < length) {
+                unwrittenBytesThisWindow += length - written
+                writeExitCounts[exitReason] = (writeExitCounts[exitReason] ?: 0) + 1
             }
         }
     }
@@ -2623,15 +2649,26 @@ private class AudioRenderer(
     }
 
     private fun trimClock(track: AudioTrack) {
-        val trim = clockTrim ?: return
+        if (mappedChannel != AudioChannel.MEDIA) return
+        val enabled = com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.audioClockTrimEnabled
+        if (enabled != clockTrimApplied) {
+            val result = runCatching { track.setPlaybackRate(format.sampleRate) }.getOrDefault(AudioTrack.ERROR)
+            report("Audio: clock trim comparison enabled=$enabled resetResult=$result")
+            if (result != AudioTrack.SUCCESS) return
+            clockTrimApplied = enabled
+            // Start a fresh controller after the fixed-rate interval; do not reuse its stale level.
+            clockTrim = MediaClockTrim(format.sampleRate, (startThresholdBytes / frameBytes).toLong())
+        }
+        if (!enabled) return
+        val activeTrim = clockTrim ?: return
         val now = System.nanoTime()
         val compressedRtpFrames = mediaLagGuard?.pendingFrames(queue, newestRtpSample, AudioPacket::sample)
             ?: 0L
         val compressedPcmFrames = compressedRtpFrames * format.sampleRate /
             format.rtpClockRate.coerceAtLeast(1)
-        trim.sample(bufferProgress.queuedBytes(track.playbackHeadPosition) / frameBytes,
+        activeTrim.sample(bufferProgress.queuedBytes(track.playbackHeadPosition) / frameBytes,
             now, compressedPcmFrames)
-        val rate = trim.rateDue(now) ?: return
+        val rate = activeTrim.rateDue(now) ?: return
         val result = runCatching { track.setPlaybackRate(rate) }.getOrDefault(AudioTrack.ERROR)
         if (result != AudioTrack.SUCCESS) {
             // The track keeps its rate; music then plays as it did before the trim.
@@ -2716,6 +2753,18 @@ private class AudioRenderer(
             Log.i(STATS_TAG, decoderLine)
             runCatching { report(decoderLine) }
         }
+        val ioLine = "Audio: io stats audioType=${format.audioType} " +
+            "rxBytes=${receivedBytes.getAndSet(0)} pcmBytes=$pcmBytesThisWindow " +
+            "writtenBytes=$writtenBytesThisWindow unwrittenBytes=$unwrittenBytesThisWindow " +
+            "writeExits=${writeExitCounts.entries.joinToString(",") { "${it.key}:${it.value}" }.ifEmpty { "none" }} " +
+            "clockTrimEnabled=${com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.audioClockTrimEnabled} " +
+            "actualPlaybackRate=${currentTrack?.playbackRate ?: -1} ended=$force"
+        Log.i(STATS_TAG, ioLine)
+        runCatching { report(ioLine) }
+        pcmBytesThisWindow = 0L
+        writtenBytesThisWindow = 0L
+        unwrittenBytesThisWindow = 0L
+        writeExitCounts.clear()
         statsLastUnderruns = underruns
         maxWriteMs = 0L
         writtenFramesThisWindow = 0L

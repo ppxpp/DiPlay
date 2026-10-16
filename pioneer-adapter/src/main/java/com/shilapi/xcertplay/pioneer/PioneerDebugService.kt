@@ -101,6 +101,14 @@ class PioneerDebugService : Service() {
                 else PioneerDebugRuntime.freescaleNoReorder = mode == "ON"
                 send(socket, reply.put("mode", mode).put("message", "日志立即生效；解码重排下次连接生效"))
             }
+            "audio-clock-trim" -> {
+                require(PioneerUsbPolicy.matchesDevice())
+                val mode = request.getString("mode")
+                require(mode in listOf("ON", "OFF"))
+                PioneerDebugRuntime.audioClockTrimEnabled = mode == "ON"
+                PioneerDebugRuntime.log(this, "AUDIO_CLOCK_TRIM enabled=${PioneerDebugRuntime.audioClockTrimEnabled}")
+                send(socket, reply.put("mode", mode).put("message", "音乐下次写入生效；进程重启恢复设备默认"))
+            }
             "system-load" -> send(socket, reply, PioneerSystemLoad.snapshot().toString(2).toByteArray())
             "touch-coalescing" -> {
                 require(PioneerUsbPolicy.matchesDevice())
@@ -282,6 +290,8 @@ class PioneerDebugService : Service() {
             .put("lwipReceiveWaitMillis", PioneerDebugRuntime.lwipReceiveWaitMillis)
             .put("asyncSessionLogs", PioneerDebugRuntime.asyncSessionLogs)
             .put("freescaleNoReorderRequested", PioneerDebugRuntime.freescaleNoReorder)
+            .put("audioClockTrimEnabled", PioneerDebugRuntime.audioClockTrimEnabled)
+            .put("audioClockTrimOverride", PioneerDebugRuntime.audioClockTrimOverride ?: JSONObject.NULL)
             .put("memory", memorySnapshot())
             .put("networkCounters", runCatching { File("/proc/net/dev").readText().take(16_384) }.getOrElse { it.toString() })
             .put("ipv6Sockets", runCatching { File("/proc/net/tcp6").readText().take(4_096) }.getOrElse { it.toString() })

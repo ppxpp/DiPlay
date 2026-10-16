@@ -29,6 +29,13 @@ object PioneerDebugRuntime {
     @Volatile var phoneDiagnosticsEnabled = false
     @Volatile var asyncSessionLogs = true
     @Volatile var freescaleNoReorder = false
+    // Only the verified wired lwIP path defaults to fixed source rate (2026-10-16).
+    // Compute lazily: the debug service starts before lwIP, and wireless keeps upstream trim.
+    @Volatile var audioClockTrimOverride: Boolean? = null
+        private set
+    var audioClockTrimEnabled: Boolean
+        get() = audioClockTrimOverride ?: !(PioneerUsbPolicy.matchesDevice() && PioneerLwipRuntime.active)
+        set(value) { audioClockTrimOverride = value }
     @Volatile var touchCoalescingComparisonEnabled = false
     @Volatile var lwipReceiveWaitMillis = 1
     @Volatile var usbTxBatchFrames = 8
