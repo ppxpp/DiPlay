@@ -9,7 +9,7 @@ import java.util.concurrent.ExecutorService
 /** Reuses the existing serial event executor; only unsent adjacent MOVE tasks can merge. */
 internal class PioneerTouchQueue(private val executor: ExecutorService, private val log: (String) -> Unit) {
     private class Task(val session: AirPlaySession, var contacts: List<AirPlayContact>, val move: Boolean,
-        val id: Long, val gesture: Long, val created: Long) { var started = false; var cancelled = false }
+        val id: Long, val gesture: Long, val created: Long) { var latestEnteredNs = created; var started = false; var cancelled = false }
     private val lock = Any()
     private val queued = ArrayDeque<Task>()
     private var id = 0L; private var gesture = 0L; private var merged = 0L; private var rejected = 0L
@@ -24,7 +24,7 @@ internal class PioneerTouchQueue(private val executor: ExecutorService, private 
             val shape = contacts.map { it.id to it.down }
             if (move && tail != null && tail.move && !tail.started && !tail.cancelled &&
                 tail.session === session && tail.gesture == gesture && tail.contacts.map { it.id to it.down } == shape) {
-                tail.contacts = contacts.toList(); merged++; return true
+                tail.contacts = contacts.toList(); tail.latestEnteredNs = enteredNs; merged++; return true
             }
             if (!move) gesture++
             if (queued.size >= 64) {
@@ -39,15 +39,16 @@ internal class PioneerTouchQueue(private val executor: ExecutorService, private 
             queued.addLast(task); peak = maxOf(peak,queued.size)
             try {
                 executor.execute {
-                    val contactsToSend = synchronized(lock) {
+                    val touch = synchronized(lock) {
                         task.started = true; queued.remove(task)
-                        if (task.cancelled || session.isClosed) null else task.contacts
+                        if (task.cancelled || session.isClosed) null else task.contacts to task.latestEnteredNs
                     } ?: return@execute
-                    val waitNs = System.nanoTime()-task.created
+                    val (contactsToSend, latestEnteredNs) = touch
+                    val waitNs = System.nanoTime()-latestEnteredNs
                     waiting.record(waitNs)
                     if (waitNs > 100_000_000L) com.shilapi.xcertplay.pioneer.PioneerDiagnostics.slow(session.lwipSession,
                         "stage=touch-queue touchId=${task.id} gestureId=${task.gesture} queueUs=${waitNs/1000}")
-                    session.sendTouch(contactsToSend, task.created, task.id, task.gesture)
+                    session.sendTouch(contactsToSend, latestEnteredNs, task.id, task.gesture)
                     synchronized(lock) {
                         if (System.nanoTime() - lastLog >= 5_000_000_000L) {
                             val age = queued.peekFirst()?.let { (System.nanoTime()-it.created)/1000 } ?: 0

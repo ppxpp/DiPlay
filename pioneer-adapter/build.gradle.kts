@@ -10,4 +10,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 }
-dependencies { implementation(libs.androidx.core.ktx) }
+dependencies {
+    implementation(libs.androidx.core.ktx)
+    compileOnly(project(":pioneer-ceam-stubs"))
+}

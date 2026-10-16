@@ -365,6 +365,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         PioneerDebugIntegration.ensure(this)
+        com.shilapi.xcertplay.pioneer.CamryDayNight.start()
         // Back on the home page finishes this activity while the session runs on, so the icon lands here.
         if (savedInstanceState == null && isLauncherIntent(intent) && CarPlayBackgroundSession.hasSession()) {
             openProjection(); finish(); return
@@ -1345,6 +1346,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             CarPlayNightMode.DAY -> R.string.carplay_night_day
             CarPlayNightMode.NIGHT -> R.string.carplay_night_night
             CarPlayNightMode.SCHEDULE -> R.string.carplay_night_schedule
+            CarPlayNightMode.CAMRY -> R.string.carplay_night_camry
         })
     }
 
@@ -1879,6 +1881,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                 getString(R.string.carplay_night_time_note), 14, MUTED).apply {
                 setPadding(0, 0, 0, dp(18))
             })
+            card.addView(label(getString(R.string.carplay_night_camry_hint), 14, MUTED))
             ambientControls.addView(label(getString(R.string.carplay_night_ambient_hint), 14, MUTED).apply {
                 setPadding(0, 0, 0, dp(18))
             })

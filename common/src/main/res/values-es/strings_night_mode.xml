@@ -20,4 +20,6 @@
     <string name="carplay_night_hint">Guarda y vuelve a CarPlay para aplicar.</string>
     <string name="carplay_night_ambient_hint">Usa el umbral y el retardo de abajo. Sin sensor de luz, sigue Android.</string>
     <string name="carplay_night_time_note">Cuando la apariencia está en Automático en los ajustes de CarPlay, CarPlay también tiene en cuenta la hora del iPhone. Aunque selecciones Siempre de día, CarPlay puede seguir mostrando una apariencia oscura por la noche.</string>
+    <string name="carplay_night_camry">Seguir la unidad Camry</string>
+    <string name="carplay_night_camry_hint">Lee el modo día/noche de la unidad Camry al abrir DiPlay y escucha los cambios. Envía el último estado al conectar CarPlay. En otros dispositivos o si la interfaz no está disponible, sigue Android. Guarda y vuelve a CarPlay para aplicar sin reconectar.</string>
 </resources>

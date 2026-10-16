@@ -93,12 +93,53 @@ class PioneerDebugService : Service() {
         require(request.optString("token") == PioneerDebugRuntime.token(this)) { "调试口令不匹配" }
         val reply = JSONObject().put("ok", true)
         when (val command = request.getString("cmd")) {
+            "async-session-logs", "freescale-reorder" -> {
+                require(PioneerUsbPolicy.matchesDevice())
+                val mode = request.getString("mode")
+                require(mode in listOf("ON", "OFF"))
+                if (request.getString("cmd") == "async-session-logs") PioneerDebugRuntime.asyncSessionLogs = mode == "ON"
+                else PioneerDebugRuntime.freescaleNoReorder = mode == "ON"
+                send(socket, reply.put("mode", mode).put("message", "日志立即生效；解码重排下次连接生效"))
+            }
+            "system-load" -> send(socket, reply, PioneerSystemLoad.snapshot().toString(2).toByteArray())
+            "touch-coalescing" -> {
+                require(PioneerUsbPolicy.matchesDevice())
+                val mode = request.getString("mode")
+                require(mode in listOf("ON", "OFF"))
+                PioneerDebugRuntime.touchCoalescingComparisonEnabled = mode == "ON"
+                send(socket, reply.put("mode", mode))
+            }
+            "lwip-poll-wait" -> {
+                require(PioneerUsbPolicy.matchesDevice())
+                val millis = request.getInt("millis")
+                require(millis in listOf(1, 2, 4))
+                PioneerDebugRuntime.lwipReceiveWaitMillis = millis
+                send(socket, reply.put("millis", millis))
+            }
+            "video-priority" -> {
+                val mode = request.getString("mode")
+                require(mode in listOf("ON", "OFF"))
+                send(socket, reply.put("threads", PioneerVideoScheduling.apply(mode == "ON")))
+            }
+            "native-crypto" -> {
+                val mode = request.getString("mode")
+                require(mode in listOf("ON", "OFF"))
+                require(mode == "OFF" || (PioneerUsbPolicy.matchesDevice() && PioneerNativeCrypto.available)) { "Native crypto unavailable" }
+                PioneerDebugRuntime.nativeCryptoComparisonEnabled = mode == "ON"
+                PioneerDebugRuntime.log(this, "CRYPTO_COMPARISON native=${mode == "ON"}")
+                send(socket, reply.put("mode", mode).put("message", "运行时对照；不写入偏好，重启恢复默认"))
+            }
+            "video-snapshot" -> {
+                val bytes = PioneerDebugRuntime.videoSnapshot?.invoke() ?: error("CarPlay host unavailable")
+                send(socket, reply.put("format", "png"), bytes)
+            }
             "status" -> send(socket, status().put("ok", true))
             "video-settings" -> {
                 val settings = PioneerDebugRuntime.videoSettings?.invoke(request) ?: error("Open DiPlay first")
                 send(socket, reply.put("settings", settings).put("message", "设置下次连接生效；当前会话不变"))
             }
-            "video-gesture" -> send(socket, reply.put("gesture", PioneerDebugRuntime.startVideoGesture()))
+            "video-tap" -> send(socket, reply.put("tap", PioneerDebugRuntime.tapVideo(request)))
+            "video-gesture" -> send(socket, reply.put("gesture", PioneerDebugRuntime.startVideoGesture(request.optString("kind", "SWIPE"))))
             "network" -> send(socket, reply, networkDiagnostics().toString(2).toByteArray())
             "runtime" -> send(socket, reply, runtimeDiagnostics().toString(2).toByteArray())
             "usb-tx-batch" -> {
@@ -218,6 +259,9 @@ class PioneerDebugService : Service() {
             .put("port", PioneerDebugRuntime.port).put("listener", PioneerDebugRuntime.listenerState)
             .put("addresses", JSONArray(addresses())).put("vpn", vpn).put("host", PioneerDebugRuntime.snapshot())
             .put("usbConfigurationMode", PioneerUsbPolicy.configurationMode(this))
+            .put("usbConfigurationEffectiveMode", if (LocalConnectionExperiments.USB_CONFIGURATION_REUSE)
+                PioneerUsbPolicy.configurationMode(this) else "REINITIALIZE")
+            .put("upstreamAlignment", LocalConnectionExperiments.summary())
             .put("connectionTimeline", JSONArray(PioneerConnectionTrace.snapshot()))
             .put("usbMode", PioneerUsbPolicy.mode(this)).put("pioneerUsbEnabled", PioneerUsbPolicy.enabled(this))
             .put("matchedFirmware", PioneerUsbPolicy.matchesDevice()).put("devices", JSONArray(devices))
@@ -233,6 +277,11 @@ class PioneerDebugService : Service() {
             .put("lwipControlPort", PioneerLwipRuntime.controlPort)
             .put("lwipTimeline", JSONArray(PioneerLwipRuntime.timeline()))
             .put("nativeCryptoVerified", PioneerNativeCrypto.available)
+            .put("nativeCryptoEnabled", PioneerNativeCrypto.enabled)
+            .put("touchCoalescingEnabled", PioneerDebugRuntime.touchCoalescingComparisonEnabled)
+            .put("lwipReceiveWaitMillis", PioneerDebugRuntime.lwipReceiveWaitMillis)
+            .put("asyncSessionLogs", PioneerDebugRuntime.asyncSessionLogs)
+            .put("freescaleNoReorderRequested", PioneerDebugRuntime.freescaleNoReorder)
             .put("memory", memorySnapshot())
             .put("networkCounters", runCatching { File("/proc/net/dev").readText().take(16_384) }.getOrElse { it.toString() })
             .put("ipv6Sockets", runCatching { File("/proc/net/tcp6").readText().take(4_096) }.getOrElse { it.toString() })

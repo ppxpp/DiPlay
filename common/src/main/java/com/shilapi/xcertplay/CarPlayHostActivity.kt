@@ -151,6 +151,7 @@ class CarPlayHostActivity : ComponentActivity() {
     )
 
     private var connectionPanel: View? = null
+    private val connectionProgressPanel by lazy { com.shilapi.xcertplay.connection.ConnectionProgressPanel(this) }
     private var connectionInstructionsView: TextView? = null
     private var connectionHelpView: TextView? = null
     private var wifiRecoveryButton: View? = null
@@ -562,6 +563,7 @@ class CarPlayHostActivity : ComponentActivity() {
     private var hideBydCallPopup = false
     private var paintWaitingScreen: () -> Unit = {}
     private var carPlayNightMode = CarPlayNightMode.SYSTEM
+    private var stopObservingCamryNight: (() -> Unit)? = null
     private var nightSchedule = CarPlayNightSchedule()
     private var ambientLightThreshold = AmbientLightThreshold()
     private var ambientDelaySeconds = 2
@@ -571,6 +573,7 @@ class CarPlayHostActivity : ComponentActivity() {
             light = AndroidAmbientLight(this),
             scheduler = MainThreadNightModeScheduler(),
             initialNight = darkMode,
+            initialCamryNight = com.shilapi.xcertplay.pioneer.CamryDayNight.latestNight,
             onNightChanged = { night ->
                 darkMode = night
                 if (hostAppearanceResumed) AppAppearanceRuntime.publishHost(this, night)
@@ -784,6 +787,7 @@ class CarPlayHostActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         PioneerDebugIntegration.ensure(this)
+        com.shilapi.xcertplay.pioneer.CamryDayNight.start()
         NavigationWidgetUpdater.attach(applicationContext)
         CarPlayCallKeys.install(applicationContext)
         CenterMapOverlay.requestShow = ::showCenterMap
@@ -810,12 +814,25 @@ class CarPlayHostActivity : ComponentActivity() {
             resources.getBoolean(R.bool.config_advanced_audio_channel_mapping)
         airPlayIdentity = AirPlayPersistence.loadIdentity(this)
         loadPersistedSettings()
+        stopObservingCamryNight = com.shilapi.xcertplay.pioneer.CamryDayNight.observe { night ->
+            nightModeController.camryChanged(night)
+        }
         PioneerDebugIntegration.attachHost(this, state = {
             org.json.JSONObject().put("hostAttached", true).put("wireless", wirelessEnabled)
                 .put("vpnReady", vpnReady).put("awaitingVpnConsent", awaitingVpnConsent)
                 .put("controllerRunning", controller != null).put("backgroundSession", CarPlayBackgroundSession.hasSession())
                 .put("stage", latestStage).put("screenStreams", org.json.JSONArray(activeScreenStreamTypes.toList()))
-        }, retryVpn = { requestStartupPrerequisites() }, videoGesture = ::startDebugVideoGesture)
+                .put("connectionOverlayVisible", connectionPanel?.visibility == View.VISIBLE)
+                .put("firstOutput", controller?.connectionProgress?.hasRendered)
+                .put("progressOutcome", controller?.connectionProgress?.snapshot()?.outcome?.name)
+                .put("videoRendered", sink?.liveVideoCounters()?.rendered)
+                .put("videoReceived", sink?.liveVideoCounters()?.received)
+                .put("diagnosticLogDropped", AsyncDiagnosticLog.droppedCount)
+        }, retryVpn = { requestStartupPrerequisites() }, videoGesture = ::startDebugVideoGesture, videoTap = ::debugVideoTap,
+            videoSnapshot = {
+                check(!debugGestureRunning) { "Wait for timed gesture to complete before capturing" }
+                CarPlaySurfaceSnapshot.capture(currentSurface, videoView?.width ?: 1280, videoView?.height ?: 720)
+            })
         locationPermissionAvailable = hasFineLocationPermission()
         setContentView(buildContentView())
         applyFullscreenMode()
@@ -1852,6 +1869,8 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        stopObservingCamryNight?.invoke()
+        stopObservingCamryNight = null
         PioneerDebugIntegration.detachHost(this)
         mainHandler.removeCallbacks(hideTemporarySystemBars)
         discardLastPicture()
@@ -1918,18 +1937,8 @@ class CarPlayHostActivity : ComponentActivity() {
             root.addView(overlay, FrameLayout.LayoutParams(-1, -1))
         }
         root.addView(gestureLayer, FrameLayout.LayoutParams(-1, -1))
-        // Measure the preparation content naturally, then fit it inside the safe viewport.
-        val viewport = object : FrameLayout(this) {
-            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-                super.onMeasure(widthMeasureSpec, heightMeasureSpec)
-                getChildAt(0)?.measure(
-                    View.MeasureSpec.makeMeasureSpec((measuredWidth - paddingLeft - paddingRight).coerceAtLeast(0), View.MeasureSpec.EXACTLY),
-                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-                )
-            }
-        }.apply {
-            isClickable = true
-        }
+        // The progress widget measures itself; scroll rather than scaling all text on short screens.
+        val viewport = FrameLayout(this).apply { isClickable = true }
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -1950,6 +1959,10 @@ class CarPlayHostActivity : ComponentActivity() {
             gravity = Gravity.CENTER
         }
         panel.addView(stage)
+        (connectionProgressPanel.parent as? android.view.ViewGroup)?.removeView(connectionProgressPanel)
+        panel.addView(connectionProgressPanel, LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = dp(10); bottomMargin = dp(6)
+        })
         val instructions = TextView(this).apply {
             text = if (wirelessEnabled) getString(R.string.keep_your_iphone_nearby_with_bluetooth_and_wi_fi_on_allow)
                 else getString(R.string.use_a_usb_data_cable_and_unlock_your_iphone_allow_trust_an)
@@ -1998,6 +2011,7 @@ class CarPlayHostActivity : ComponentActivity() {
             // The connection screen is DiPlay chrome: follow the app theme, not the day/night mode sent to CarPlay.
             val colors = WaitingScreenColors.of(appNight)
             viewport.setBackgroundColor(colors.background)
+            connectionProgressPanel.setNight(appNight)
             title.setTextColor(colors.text)
             stage.setTextColor(colors.text)
             instructions.setTextColor(colors.secondary)
@@ -2009,7 +2023,12 @@ class CarPlayHostActivity : ComponentActivity() {
             recovery.style(DiPlayButtonKind.SECONDARY, buttonPalette, overlay = false)
         }
         paintWaitingScreen()
-        viewport.addView(panel, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
+        val preparationScroll = ScrollView(this).apply {
+            isFillViewport = true
+            isVerticalScrollBarEnabled = true
+            addView(panel, FrameLayout.LayoutParams(-1, -2))
+        }
+        viewport.addView(preparationScroll, FrameLayout.LayoutParams(-1, -1))
         root.addView(viewport, FrameLayout.LayoutParams(-1, -1))
         // Above the video and gesture layer, below the menus.
         sidePanelBlur = ImageView(this).apply {
@@ -2036,13 +2055,13 @@ class CarPlayHostActivity : ComponentActivity() {
             if (preparationHeight == height) return
             preparationHeight = height
             panel.setPadding(dp(24), spacing(16f, 32f), dp(24), spacing(16f, 32f))
-            val iconSize = spacing(54f, 88f)
+            val iconSize = spacing(32f, 48f)
             icon.layoutParams = LinearLayout.LayoutParams(iconSize, iconSize)
-            title.textSize = size(26f, 34f)
-            title.setPadding(0, spacing(8f, 18f), 0, spacing(6f, 14f))
-            stage.textSize = size(19f, 22f)
+            title.textSize = size(22f, 28f)
+            title.setPadding(0, spacing(4f, 10f), 0, spacing(4f, 8f))
+            stage.textSize = size(16f, 19f)
             instructions.textSize = size(15f, 17f)
-            instructions.setPadding(0, spacing(8f, 14f), 0, spacing(12f, 24f))
+            instructions.setPadding(0, spacing(6f, 10f), 0, spacing(8f, 14f))
             help.textSize = size(15f, 17f)
             help.setPadding(0, spacing(8f, 14f), 0, spacing(12f, 24f))
             for (button in listOf(back, recovery, retry)) {
@@ -2052,18 +2071,8 @@ class CarPlayHostActivity : ComponentActivity() {
             gestureHint.textSize = size(12.5f, 13f)
             gestureHint.setPadding(0, spacing(10f, 20f), 0, 0)
         }
-        fun fitPreparationContent() {
-            val availableHeight = viewport.height - viewport.paddingTop - viewport.paddingBottom
-            if (panel.height <= 0 || availableHeight <= 0) return
-            val landscape = viewport.width - viewport.paddingLeft - viewport.paddingRight > availableHeight
-            val scale = if (landscape) minOf(1f, availableHeight.toFloat() / panel.height) else 1f
-            panel.scaleX = scale
-            panel.scaleY = scale
-        }
-        panel.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fitPreparationContent() }
         viewport.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             updatePreparationLayout()
-            fitPreparationContent()
         }
         ViewCompat.setOnApplyWindowInsetsListener(viewport) { _, insets ->
             val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
@@ -5236,6 +5245,7 @@ class CarPlayHostActivity : ComponentActivity() {
             override fun onVideoFrameRendered(session: AirPlaySession) {
                 runOnUiThread {
                     if (controllerGeneration != restartGeneration || activeAirPlaySession !== session || shuttingDown.get()) return@runOnUiThread
+                    updateDebugOverlays()
                     if (!startupRetryBudget.firstFrame(session, android.os.SystemClock.elapsedRealtime())) return@runOnUiThread
                     mainHandler.postDelayed({
                         if (controllerGeneration == restartGeneration && activeAirPlaySession === session &&
@@ -5245,6 +5255,15 @@ class CarPlayHostActivity : ComponentActivity() {
                             appendLog("startup retry budget reset after stable video session")
                         }
                     }, WirelessStartupPolicy.STABLE_SESSION_MILLIS)
+                }
+            }
+
+            override fun onScreenFrameOutput(session: AirPlaySession, type: Int) {
+                if (type != SCREEN_TYPE_MAIN) return
+                runOnUiThread {
+                    if (controllerGeneration == restartGeneration && activeAirPlaySession === session && !shuttingDown.get()) {
+                        updateDebugOverlays()
+                    }
                 }
             }
 
@@ -5298,6 +5317,15 @@ class CarPlayHostActivity : ComponentActivity() {
                 if (message.startsWith(CarPlayController.CONNECTION_DIAGNOSTIC_PREFIX + " ")) {
                     // Retain old-controller teardown evidence without accepting its UI/session state.
                     AsyncDiagnosticLog.append(diagnosticLog, message)
+                    return
+                }
+                val displayNegotiation = message.startsWith("Phone display peer ") ||
+                    message.startsWith("Video: decoder=") || message.startsWith("Video: decoder configuration failed") ||
+                    message.startsWith("Video: output format ")
+                if (!displayNegotiation && com.shilapi.xcertplay.pioneer.PioneerUsbPolicy.matchesDevice() &&
+                    com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.asyncSessionLogs) {
+                    // Metadata logs do not update the UI. Disk rotation must not stall touch dispatch.
+                    if (controllerGeneration == restartGeneration) AsyncDiagnosticLog.append(diagnosticLog, message)
                     return
                 }
                 runOnUiThread {
@@ -5403,11 +5431,18 @@ class CarPlayHostActivity : ComponentActivity() {
             }
         }
 
+        connectionProgressPanel.bind(snapshot.controller.connectionProgress)
         val generation = restartGeneration
         snapshot.controller.attachUi(
             createSessionListener(generation),
             createStatusReporter(generation),
         )
+        // Reopening a running CarPlay connection does not emit onSessionActive again. Restore the
+        // command target too, so vehicle day/night notifications still reach the retained session.
+        activeAirPlaySession = snapshot.controller.activeSessionIdentity() as? AirPlaySession
+        if (carPlayNightMode == CarPlayNightMode.CAMRY) {
+            syncAirPlayDarkMode(ThemeModeDiagnostics.Source.SESSION_ACTIVE)
+        }
         // A new Activity adopts the running stream without another AirPlay SETUP or session-active
         // callback. Restore iOS's captured mask when the controller still owns that live session.
         if (blackCornerRadiusDp == CarPlayBlackCornerOverlay.IPHONE_MASK) {
@@ -5447,6 +5482,7 @@ class CarPlayHostActivity : ComponentActivity() {
         mfiTarget = AirPlayPersistence.loadMfiTarget(this)
         runCatching { DiPlayBootstrap.ensure(this, mfiTarget) }
         val config = createRuntimeConfig()
+        val progress = connectionProgressPanel.begin(config)
         val effectiveSize = if (isMultiWindowActive() && !AirPlayPersistence.loadAdaptPipResolution(this) &&
             maximumDetectedWidthPixels >= size.width && maximumDetectedHeightPixels >= size.height &&
             (maximumDetectedWidthPixels > size.width || maximumDetectedHeightPixels > size.height)) {
@@ -5511,6 +5547,7 @@ class CarPlayHostActivity : ComponentActivity() {
             listener = createSessionListener(controllerGeneration),
             media = media,
             reportStatus = createStatusReporter(controllerGeneration),
+            connectionProgress = progress,
             loadPairRecord = { AirPlayPersistence.loadLockdownRecord(this) },
             savePairRecord = { record -> AirPlayPersistence.saveLockdownRecord(this, record) },
             clearPairRecord = { AirPlayPersistence.clearLockdownRecord(this) },
@@ -5861,6 +5898,7 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     private fun stopPioneerRecovery(reason: String) {
+        connectionProgressPanel.failed()
         startupRetryStopped = true
         startupRetryButton?.visibility = View.VISIBLE
         setConnectionStage("$reason\nUSB CarPlay recovery stopped after $pioneerRecoveryAttempts retries; tap Retry to start again.")
@@ -5877,7 +5915,8 @@ class CarPlayHostActivity : ComponentActivity() {
         if (menuOpen) recoveryPendingAfterMenu = true
         if (shuttingDown.get() || menuOpen || handshakeResetInProgress || startupRetryStopped) return
         if (reconnectScheduled) return
-        if (!wirelessEnabled && com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.enabled(this)) {
+        if (com.shilapi.xcertplay.pioneer.LocalConnectionExperiments.WIRED_RECOVERY_BUDGET &&
+            !wirelessEnabled && com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.enabled(this)) {
             val now = System.nanoTime()
             if (pioneerRecoveryStartedNs == 0L) {
                 pioneerRecoveryStartedNs = now
@@ -5902,6 +5941,7 @@ class CarPlayHostActivity : ComponentActivity() {
             startupRetryBudget.nextDelayMillis() else null
         if (startupFailure != null && startupDelay == null) {
             startupRetryStopped = true
+            connectionProgressPanel.failed()
             startupRetryButton?.visibility = View.VISIBLE
             if (startupFailure == WirelessStartupFailure.HOTSPOT_CONFIGURATION) {
                 // Its cause is in English, for the report; the help line below says what to check.
@@ -5917,6 +5957,7 @@ class CarPlayHostActivity : ComponentActivity() {
             return
         }
         reconnectScheduled = true
+        connectionProgressPanel.retrying()
         callPopupSessionReady = false
         updateCallPopupGuard()
         val generation = restartGeneration
@@ -5952,6 +5993,7 @@ class CarPlayHostActivity : ComponentActivity() {
         if (!CarPlayBackgroundSession.isOwner(this)) return
         if (shuttingDown.get() || menuOpen || handshakeResetInProgress) return
         val size = activeDisplaySize ?: return
+        connectionProgressPanel.retrying()
         startupRetryBudget.disconnected()
         startupRetryButton?.visibility = View.GONE
         appendLog(reason)
@@ -6155,6 +6197,7 @@ class CarPlayHostActivity : ComponentActivity() {
 
     private fun shutdown(terminateProcess: Boolean, reason: String, completion: () -> Unit = {}) {
         if (!shuttingDown.compareAndSet(false, true)) { completion(); return }
+        connectionProgressPanel.cancelled()
         callPopupSessionReady = false
         updateCallPopupGuard()
         resetSidePanel()
@@ -6341,10 +6384,36 @@ class CarPlayHostActivity : ComponentActivity() {
         }
     }
 
-    private var debugGestureRunning = false
+    @Volatile private var debugGestureRunning = false
+
+    /** Authenticated TCP probe confined to the current CarPlay surface. */
+    private fun debugVideoTap(request: org.json.JSONObject): org.json.JSONObject {
+        check(!debugGestureRunning && !menuOpen && activeScreenStreamTypes.contains(SCREEN_TYPE_MAIN))
+        val view = checkNotNull(videoView)
+        check(view.isShown && view.width > 0 && view.height > 0)
+        val target = checkNotNull(controller)
+        val x = request.getDouble("x"); val y = request.getDouble("y")
+        require(x.isFinite() && y.isFinite() && x in 0.0..1.0 && y in 0.0..1.0)
+        val bounds = contentRect(view.width, view.height)
+        val time = android.os.SystemClock.uptimeMillis()
+        fun dispatch(action: Int) {
+            val event = MotionEvent.obtain(time, android.os.SystemClock.uptimeMillis(), action,
+                bounds.left + bounds.width * x.toFloat(), bounds.top + bounds.height * y.toFloat(), 0)
+            try { onHostTouch(view, event) } finally { event.recycle() }
+        }
+        dispatch(MotionEvent.ACTION_DOWN)
+        mainHandler.postDelayed({
+            if (controller === target && !menuOpen && view.isShown) dispatch(MotionEvent.ACTION_UP)
+            else if (controller === target) target.sendTouch(emptyList())
+        }, 70)
+        appendLog("TCP_VIDEO_TAP x=$x y=$y")
+        return org.json.JSONObject().put("queued", true)
+    }
 
     /** Projection-only, alternating central swipes; never injects into other apps or taps buttons. */
-    private fun startDebugVideoGesture(): org.json.JSONObject {
+    private fun startDebugVideoGesture(kind: String): org.json.JSONObject {
+        require(kind in listOf("SWIPE", "PINCH"))
+        check(kind != "PINCH" || gestureFingerCount != 2) { "Two-finger settings gesture intercepts map pinch" }
         check(!debugGestureRunning) { "Video gesture already running" }
         val target = checkNotNull(controller) { "CarPlay controller unavailable" }
         val view = checkNotNull(videoView) { "Video view unavailable" }
@@ -6353,7 +6422,7 @@ class CarPlayHostActivity : ComponentActivity() {
         val generation = restartGeneration
         val bounds = contentRect(view.width, view.height)
         debugGestureRunning = true
-        appendLog("TCP_VIDEO_GESTURE start swipes=12 durationMs=700 pauseMs=400")
+        appendLog("TCP_VIDEO_GESTURE start kind=$kind swipes=12 durationMs=700 pauseMs=400")
         val start = android.os.SystemClock.uptimeMillis()
         val steps = 42
         var step = 0
@@ -6382,8 +6451,29 @@ class CarPlayHostActivity : ComponentActivity() {
                     steps -> MotionEvent.ACTION_UP
                     else -> MotionEvent.ACTION_MOVE
                 }
-                val event = MotionEvent.obtain(downTime, now, action,
+                val event = if (kind == "SWIPE") MotionEvent.obtain(downTime, now, action,
                     bounds.left + bounds.width * x, bounds.top + bounds.height * 0.5f, 0)
+                else {
+                    val pointerCount = if (position == 0 || position == steps) 1 else 2
+                    val pinchAction = when (position) {
+                        0 -> MotionEvent.ACTION_DOWN
+                        1 -> MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
+                        steps - 1 -> MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
+                        steps -> MotionEvent.ACTION_UP
+                        else -> MotionEvent.ACTION_MOVE
+                    }
+                    val span = if (swipe % 2 == 0) 0.06f + 0.12f * fraction else 0.18f - 0.12f * fraction
+                    val properties = Array(pointerCount) { index -> MotionEvent.PointerProperties().apply {
+                        id = index; toolType = MotionEvent.TOOL_TYPE_FINGER
+                    } }
+                    val coords = Array(pointerCount) { index -> MotionEvent.PointerCoords().apply {
+                        this.x = bounds.left + bounds.width * (0.55f + if (index == 0) -span else span)
+                        this.y = bounds.top + bounds.height * 0.5f
+                        pressure = 1f; size = 0.1f
+                    } }
+                    MotionEvent.obtain(downTime, now, pinchAction, pointerCount, properties, coords,
+                        0, 0, 1f, 1f, 0, 0, android.view.InputDevice.SOURCE_TOUCHSCREEN, 0)
+                }
                 try { onHostTouch(view, event) } finally { event.recycle() }
                 step++
                 val nextSwipe = step / (steps + 1)
@@ -6393,7 +6483,7 @@ class CarPlayHostActivity : ComponentActivity() {
             }
         }
         mainHandler.post(task)
-        return org.json.JSONObject().put("swipes", 12).put("durationMs", 13200)
+        return org.json.JSONObject().put("kind", kind).put("swipes", 12).put("durationMs", 13200)
     }
 
     private fun onHostTouch(view: View, event: MotionEvent): Boolean {
@@ -6556,7 +6646,10 @@ class CarPlayHostActivity : ComponentActivity() {
 
     private fun updateDebugOverlays() {
         statusScrollView?.visibility = View.GONE
-        connectionPanel?.visibility = if (activeScreenStreamTypes.isEmpty()) View.VISIBLE else View.GONE
+        // Archived v66/v67 gate: progress is observational and must never cover a working stream.
+        // Restore upstream visibility until frame/session association is proven on the head unit.
+        val waitingForFirstFrame = false && controller?.connectionProgress?.hasRendered == false
+        connectionPanel?.visibility = if (activeScreenStreamTypes.isEmpty() || waitingForFirstFrame) View.VISIBLE else View.GONE
     }
 
     // The keywords are English; matching the English text keeps the result the same in every UI language.

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="connect_progress_preparation">Підготовка</string>
+    <string name="connect_progress_device">Зв’язок з iPhone</string>
+    <string name="connect_progress_control">Сполучення й перевірка</string>
+    <string name="connect_progress_network">Мережа</string>
+    <string name="connect_progress_session">Запуск CarPlay</string>
+    <string name="connect_progress_video">Виведення кадру</string>
+    <string name="connect_progress_waiting">Очікування підключення</string>
+    <string name="connect_progress_learning">Збираємо історію; оцінка з’явиться після успішного підключення.</string>
+    <string name="connect_progress_summary">Спроба %1$s · %2$s с зараз · %3$s с загалом</string>
+    <string name="connect_progress_seconds">%1$s с</string>
+    <string name="connect_progress_pending">Очікування</string>
+    <string name="connect_progress_skipped">Без окремого очікування</string>
+    <string name="connect_progress_retrying">Очікування повтору; час етапів збережено.</string>
+    <string name="connect_progress_failed">Підключення перервано; див. повідомлення нижче.</string>
+    <string name="connect_progress_cancelled">Підключення зупинено</string>
+    <string name="connect_progress_complete">Перший кадр виведено · %1$s с</string>
+    <string name="connect_progress_user_wait">Очікування пристрою або дозволу; оцінка часу поки недоступна.</string>
+    <string name="connect_progress_overrun">Довше, ніж зазвичай; очікуємо поточний етап.</string>
+    <string name="connect_progress_estimate">Залишилося близько %1$s с · зазвичай усього %2$s с · %3$s останніх підключень</string>
+</resources>

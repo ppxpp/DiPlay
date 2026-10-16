@@ -58,7 +58,14 @@ static uint64_t timer_last,timer_gap_max;
 static unsigned int tcp_cursor,udp_cursor;
 static FILE *scan_file;static int scan_index;static u32_t scan_next;
 static const char *scan_paths[]={"/proc/net/tcp","/proc/net/tcp6","/proc/net/udp","/proc/net/udp6"};
-static void timed(struct timing *t,uint64_t ns,int error){if(!diagnostics_enabled)return;uint64_t us=(ns+999)/1000;int i=0;while(i<127&&((1ULL<<(i/4))*(4+i%4)/4)<us)i++;t->bins[i]++;t->count++;t->errors+=!!error;if(ns>t->max)t->max=ns;}
+static void timed(struct timing *t,uint64_t ns,int error){if(!diagnostics_enabled)return;uint64_t us=(ns+999)/1000;int i;
+#if 0 /* Retained original linear bucket search. */
+i=0;while(i<127&&((1ULL<<(i/4))*(4+i%4)/4)<us)i++;
+#else
+unsigned int e=63u-(unsigned int)__builtin_clzll(us?us:1);uint64_t base=1ULL<<e;
+i=(int)(e*4+(us?((us-base)*4+base-1)/base:0));if(i>127)i=127;
+#endif
+t->bins[i]++;t->count++;t->errors+=!!error;if(ns>t->max)t->max=ns;}
 static uint64_t quantile(struct timing *t,int p){unsigned long target=(t->count*p+99)/100,n=0;for(int i=0;i<128;i++){n+=t->bins[i];if(n>=target)return (1ULL<<(i/4))*(4+i%4)/4;}return t->max/1000;}
 
 void diplay_assert(const char *message,const char *file,int line) {

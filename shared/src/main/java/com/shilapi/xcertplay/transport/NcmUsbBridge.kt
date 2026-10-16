@@ -99,9 +99,10 @@ class NcmUsbBridge internal constructor(
         val block = Ntb16Codec.buildBatch(frames, seq)
         val writing = System.nanoTime()
         val native = com.shilapi.xcertplay.pioneer.PioneerUsbPolicy.matchesDevice()
-        // Framework bulkTransfer pins the heap during a NAK; keep upstream's short startup wait.
-        // The Pioneer native path copies first and retains its validated caller timeout.
-        val writeTimeout = if (!native && !bulkOutAccepted)
+        // Use upstream's short startup wait for both framework and native writes. Keep the old
+        // native caller-timeout alternative in source, disabled until comparative evidence exists.
+        val legacyNativeWait = native && com.shilapi.xcertplay.pioneer.LocalConnectionExperiments.NATIVE_LONG_INITIAL_WRITE
+        val writeTimeout = if (!legacyNativeWait && !bulkOutAccepted)
             minOf(timeoutMillis, NOT_READY_WRITE_TIMEOUT_MILLIS) else timeoutMillis
         val detail = if (native && com.shilapi.xcertplay.pioneer.PioneerDiagnostics.enabled)
             com.shilapi.xcertplay.pioneer.PioneerUsbNative.bulkWriteMeasured(connection.fileDescriptor, outEndpoint.address, block, writeTimeout) else null

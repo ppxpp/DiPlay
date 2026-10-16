@@ -8,7 +8,8 @@ enum class CarPlayNightMode(val key: String) {
     AMBIENT("ambient"),
     DAY("day"),
     NIGHT("night"),
-    SCHEDULE("schedule");
+    SCHEDULE("schedule"),
+    CAMRY("camry");
 
     companion object {
         fun fromKey(key: String?): CarPlayNightMode = entries.firstOrNull { it.key == key } ?: SYSTEM
@@ -50,6 +51,7 @@ internal class CarPlayNightModeController(
     initialNight: Boolean,
     private val onNightChanged: (Boolean) -> Unit,
     private val timeSource: NightTimeSource = SystemNightTimeSource,
+    initialCamryNight: Boolean? = null,
 ) {
     interface LightSource {
         val available: Boolean
@@ -66,6 +68,7 @@ internal class CarPlayNightModeController(
         private set
     private var mode = CarPlayNightMode.SYSTEM
     private var systemNight = initialNight
+    private var camryNight = initialCamryNight
     private var threshold = AmbientLightThreshold()
     private var delaySeconds = 2
     private var schedule = CarPlayNightSchedule()
@@ -117,12 +120,20 @@ internal class CarPlayNightModeController(
         systemNight = night
         val ambientFallback = mode == CarPlayNightMode.AMBIENT &&
             (!light.available || (resumed && !listening))
-        if (mode == CarPlayNightMode.SYSTEM || ambientFallback) applyNight(night)
+        val camryFallback = mode == CarPlayNightMode.CAMRY && camryNight == null
+        if (mode == CarPlayNightMode.SYSTEM || ambientFallback || camryFallback) applyNight(night)
+    }
+
+    /** Keep the last valid vehicle value even while another mode is selected or the host is paused. */
+    fun camryChanged(night: Boolean) {
+        camryNight = night
+        if (mode == CarPlayNightMode.CAMRY) applyNight(night)
     }
 
     private fun applyMode() {
         when (mode) {
             CarPlayNightMode.SYSTEM -> applyNight(systemNight)
+            CarPlayNightMode.CAMRY -> applyNight(camryNight ?: systemNight)
             CarPlayNightMode.DAY -> applyNight(false)
             CarPlayNightMode.NIGHT -> applyNight(true)
             CarPlayNightMode.SCHEDULE -> applySchedule()

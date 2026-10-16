@@ -27,6 +27,26 @@ object PioneerUsbPolicy {
         require(mode in listOf("REINITIALIZE", "REUSE")) { "mode must be REINITIALIZE or REUSE" }
         check(prefs(context).edit().putString("configuration_mode", mode).commit()) { "Could not save configuration mode" }
     }
+    // Process restarts (including APK replacement) must not forget a used USB enumeration.
+    // Scope this exception to verified firmware and the current Android boot; paths can be
+    // recycled after reboot. If boot identity is unavailable, retain upstream in-memory behavior.
+    private fun bootCount(context: Context): Int? = runCatching {
+        android.provider.Settings.Global.getInt(context.contentResolver, android.provider.Settings.Global.BOOT_COUNT)
+    }.getOrNull()
+
+    fun startedOnThisBoot(context: Context, node: String): Boolean {
+        if (!matchesDevice()) return false
+        val boot = bootCount(context) ?: return false
+        return prefs(context).getInt("last_session_boot", -1) == boot &&
+            prefs(context).getString("last_session_node", null) == node
+    }
+
+    fun rememberStarted(context: Context, node: String) {
+        if (!matchesDevice()) return
+        val boot = bootCount(context) ?: return
+        prefs(context).edit().putInt("last_session_boot", boot).putString("last_session_node", node).apply()
+    }
+
     private fun prefs(context: Context) = context.getSharedPreferences("pioneer-adapter", Context.MODE_PRIVATE)
 
     fun claimOverride(context: Context, log: (String) -> Unit): ((UsbDeviceConnection, UsbInterface) -> Boolean)? =
@@ -54,8 +74,9 @@ object PioneerUsbPolicy {
             check(ids.isNotEmpty()) { "No interfaces found for active USB configuration $activeId" }
             log("PIONEER_USB active=$activeId target=${target.id} activeInterfaces=${ids.joinToString()}")
             val configurationMode = configurationMode(context)
-            val reuse = activeId == target.id && configurationMode == "REUSE"
-            PioneerConnectionTrace.mark("usb-configuration", "mode=$configurationMode active=$activeId target=${target.id} reuse=$reuse")
+            val reuse = LocalConnectionExperiments.USB_CONFIGURATION_REUSE &&
+                activeId == target.id && configurationMode == "REUSE"
+            PioneerConnectionTrace.mark("usb-configuration", "mode=$configurationMode active=$activeId target=${target.id} reuse=$reuse legacyReuseEnabled=${LocalConnectionExperiments.USB_CONFIGURATION_REUSE}")
             if (reuse) {
                 log("PIONEER_USB_CONFIG_REUSE active=$activeId; keep configuration, claim interfaces normally")
             } else if (activeId == target.id) {

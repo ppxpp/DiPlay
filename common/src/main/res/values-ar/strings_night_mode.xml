@@ -20,4 +20,6 @@
     <string name="carplay_night_hint">احفظ ثم عد إلى CarPlay للتطبيق.</string>
     <string name="carplay_night_ambient_hint">يستخدم العتبة والتأخير أدناه. ويتبع Android عند غياب مستشعر الضوء.</string>
     <string name="carplay_night_time_note">عند اختيار المظهر التلقائي في إعدادات CarPlay، يراعي CarPlay وقت iPhone أيضًا. حتى إذا اخترت نهار دائمًا، فقد يظهر CarPlay بمظهر داكن ليلًا.</string>
+    <string name="carplay_night_camry">اتباع وحدة Camry</string>
+    <string name="carplay_night_camry_hint">يقرأ حالة النهار والليل من وحدة Camry عند فتح DiPlay ويستمع للتغييرات. يرسل آخر حالة عند اتصال CarPlay. على الأجهزة الأخرى أو عند تعذر الواجهة يتبع Android. احفظ وارجع إلى CarPlay للتطبيق دون إعادة الاتصال.</string>
 </resources>

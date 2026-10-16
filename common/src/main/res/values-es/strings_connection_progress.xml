@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="connect_progress_preparation">Preparación</string>
+    <string name="connect_progress_device">Enlace iPhone</string>
+    <string name="connect_progress_control">Emparejar y autenticar</string>
+    <string name="connect_progress_network">Red</string>
+    <string name="connect_progress_session">Iniciar CarPlay</string>
+    <string name="connect_progress_video">Salida de vídeo</string>
+    <string name="connect_progress_waiting">Esperando el inicio</string>
+    <string name="connect_progress_learning">Recopilando tiempos; la estimación aparece tras una conexión correcta.</string>
+    <string name="connect_progress_summary">Intento %1$s · %2$s s este intento · %3$s s en total</string>
+    <string name="connect_progress_seconds">%1$s s</string>
+    <string name="connect_progress_pending">Pendiente</string>
+    <string name="connect_progress_skipped">Sin espera adicional</string>
+    <string name="connect_progress_retrying">Esperando para reintentar; se conservan los tiempos.</string>
+    <string name="connect_progress_failed">Conexión interrumpida; consulta el mensaje inferior.</string>
+    <string name="connect_progress_cancelled">Conexión detenida</string>
+    <string name="connect_progress_complete">Primer fotograma enviado · %1$s s</string>
+    <string name="connect_progress_user_wait">Esperando el dispositivo o permiso; aún no se puede estimar el tiempo restante.</string>
+    <string name="connect_progress_overrun">Está tardando más de lo habitual; esperando el paso actual.</string>
+    <string name="connect_progress_estimate">Quedan unos %1$s s · total habitual %2$s s · %3$s conexiones recientes</string>
+</resources>

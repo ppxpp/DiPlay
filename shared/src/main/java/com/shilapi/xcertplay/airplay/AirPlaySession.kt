@@ -32,6 +32,8 @@ interface AirPlaySessionListener {
     fun onSessionActive(session: AirPlaySession) {}
     fun onSessionEnded(session: AirPlaySession) {}
     fun onVideoFrameRendered(session: AirPlaySession) {}
+    /** First decoded frame released to this screen's Surface; not a physical display timestamp. */
+    fun onScreenFrameOutput(session: AirPlaySession, type: Int) {}
     /** Validated downstream; immutable copy of iPhone's top-left grayscale coverage PNG. */
     fun onCornerMask(session: AirPlaySession, png: ByteArray, displayWidth: Int) {}
     fun onTransportError(message: String) {}
@@ -160,8 +162,11 @@ class AirPlaySession(
 
     internal fun logDebug(message: String) = debugLog(message)
 
-    internal fun videoFrameRendered() {
-        if (!closed.get()) listener.onVideoFrameRendered(this)
+    internal fun videoFrameRendered(type: Int = 110) {
+        if (!closed.get()) {
+            listener.onScreenFrameOutput(this, type)
+            listener.onVideoFrameRendered(this)
+        }
     }
 
     internal fun logTrace(message: String) = trace(message)
@@ -1272,7 +1277,10 @@ internal fun safeClose(closeable: Closeable?) {
 }
 
 private fun ByteArray.toHex(): String =
-    joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    // Reuse upstream's allocation-light encoder. The trace text is identical; String.format
+    // per byte delayed /info responses on the old ARM head unit even when UI hid TRACE logs.
+    if (false) joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    else toHexString()
 
 private fun asMap(value: Any?): Map<String, Any?>? {
     val map = value as? Map<*, *> ?: return null

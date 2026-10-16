@@ -20,4 +20,6 @@
     <string name="carplay_night_hint">Збережіть і поверніться до CarPlay.</string>
     <string name="carplay_night_ambient_hint">Використовуються поріг і затримка нижче. Без датчика світла використовуються налаштування Android.</string>
     <string name="carplay_night_time_note">Якщо в налаштуваннях оформлення всередині CarPlay вибрано автоматичний режим, CarPlay також враховує час iPhone. Навіть якщо вибрано режим «Завжди денний», уночі CarPlay може відображатися в темному оформленні.</string>
+    <string name="carplay_night_camry">Як на головному пристрої Camry</string>
+    <string name="carplay_night_camry_hint">Під час відкриття DiPlay зчитує денний/нічний режим Camry та слухає зміни. Під час підключення CarPlay надсилає останній стан. На інших пристроях або за недоступності інтерфейсу використовує Android. Збережіть і поверніться в CarPlay; повторне підключення не потрібне.</string>
 </resources>

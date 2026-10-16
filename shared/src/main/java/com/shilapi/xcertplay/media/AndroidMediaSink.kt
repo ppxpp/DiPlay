@@ -914,7 +914,7 @@ private class VideoDecoder(
     private val preferSoftwareHevcDecoder: Boolean,
     private val requestKeyFrame: () -> Unit,
     private val report: (String) -> Unit,
-    statsLabel: String? = null,
+    private val statsLabel: String? = null,
     pacingDelayNanos: Long = 0L,
     /** Called on the worker as its last step, after it has released its codec. */
     private val onExit: (VideoDecoder) -> Unit = {},
@@ -1159,6 +1159,11 @@ private class VideoDecoder(
         // MTK vendor failures may surface as CodecException or the broader IllegalStateException.
         // Retire the active experimental mode before recreating the decoder.
         if (error is IllegalStateException) {
+            if (com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.freescaleNoReorder &&
+                com.shilapi.xcertplay.pioneer.PioneerUsbPolicy.matchesDevice()) {
+                com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.freescaleNoReorder = false
+                report("Freescale no-reorder comparison disabled after codec failure")
+            }
             dropMtkTuning("codec failed during $stage")
             dropMtkCodec2LowLatency("codec failed during $stage")
         }
@@ -1395,6 +1400,15 @@ private class VideoDecoder(
             configuredVendorLowLatency = vendorKeys.isNotEmpty()
             val pictureOrder = attempt.tuned && atOnce && listsPictureOrder(codec)
             if (pictureOrder) format.setInteger(PICTURE_ORDER_PARAMETER, 1)
+            if (streamType == MAIN_SCREEN_TYPE && statsLabel == null &&
+                mime == MediaFormat.MIMETYPE_VIDEO_AVC && createdName.startsWith("OMX.Freescale.") &&
+                com.shilapi.xcertplay.pioneer.PioneerUsbPolicy.matchesDevice() &&
+                com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.freescaleNoReorder) {
+                // NXP ACodec vendor extension, not the unrelated Qualcomm low-latency keys.
+                // Explicit comparison only until validated on this firmware and this stream.
+                format.setString("disreorder", "1")
+                report("Freescale disable AVC reorder requested via disreorder=1")
+            }
             codec.configure(format, surface, null, 0)
             phase = "start"
             phaseStartNs = System.nanoTime()
@@ -1410,6 +1424,11 @@ private class VideoDecoder(
             val elapsedMs = (System.nanoTime() - startedNs) / 1_000_000
             runCatching { candidate?.release() }.onFailure {
                 Log.w(TAG, "video decoder candidate release failed name=$codecName", it)
+            }
+            if (codecName.startsWith("OMX.Freescale.") &&
+                com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.freescaleNoReorder) {
+                com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.freescaleNoReorder = false
+                report("Freescale no-reorder comparison refused; next attempt uses default")
             }
             reportFailure("stage=configure phase=$phase phaseMs=$phaseMs elapsedMs=$elapsedMs " +
                 "tuned=${attempt.tuned} operatingRate=${attempt.operatingRate} " +

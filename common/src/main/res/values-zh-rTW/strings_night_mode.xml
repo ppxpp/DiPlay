@@ -20,4 +20,6 @@
     <string name="carplay_night_schedule_same_time">開始與結束時間不能相同。</string>
     <string name="carplay_night_hint">儲存後返回 CarPlay 即可套用。</string>
     <string name="carplay_night_time_note">在 CarPlay 內的外觀設定選擇「自動」時，也會參考 iPhone 時間。即使選擇固定日間，在夜間仍可能顯示深色外觀。</string>
+    <string name="carplay_night_camry">跟隨凱美瑞車機</string>
+    <string name="carplay_night_camry_hint">使用凱美瑞車機的日間／夜間狀態。DiPlay 開啟後讀取一次並持續監聽；CarPlay 連線時套用最近狀態，變更後即時同步。其他裝置或介面無法使用時跟隨 Android 系統。儲存後返回 CarPlay 生效，無需重新連線。</string>
 </resources>

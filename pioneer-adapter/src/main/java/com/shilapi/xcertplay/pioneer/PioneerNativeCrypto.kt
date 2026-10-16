@@ -2,6 +2,11 @@ package com.shilapi.xcertplay.pioneer
 
 /** RFC8439 AEAD on the old ARM head unit. No keys/payloads enter diagnostic logs. */
 object PioneerNativeCrypto {
+    // Map A/B/A on the verified old ARM firmware: lower decrypt latency and CPU than BC.
+    // Platform Cipher/BC remain the default everywhere else; native availability includes AEAD tests.
+    val enabled: Boolean get() = (PioneerDebugRuntime.nativeCryptoComparisonEnabled
+        ?: (PioneerUsbPolicy.matchesDevice() || LocalConnectionExperiments.NATIVE_CHACHA)) && available
+
     val available: Boolean by lazy {
         if (!PioneerUsbPolicy.matchesDevice()) false else runCatching {
             System.loadLibrary("pioneer_crypto")

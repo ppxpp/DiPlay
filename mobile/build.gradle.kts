@@ -20,8 +20,8 @@ android {
         applicationId = "com.gtmc.app.fengyunyx.b819"
         minSdk = 23
         targetSdk = 37
-        versionCode = 64
-        versionName = "0.2.28-car-upstream-sync"
+        versionCode = 73
+        versionName = "0.2.28-car-pipeline-probe"
 
     }
 

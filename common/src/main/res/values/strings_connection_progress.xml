@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="connect_progress_preparation">Preparation</string>
+    <string name="connect_progress_device">iPhone link</string>
+    <string name="connect_progress_control">Pair &amp; authenticate</string>
+    <string name="connect_progress_network">Network link</string>
+    <string name="connect_progress_session">Start CarPlay</string>
+    <string name="connect_progress_video">First frame output</string>
+    <string name="connect_progress_waiting">Waiting to start connecting</string>
+    <string name="connect_progress_learning">Learning connection time; an estimate appears after a successful connection.</string>
+    <string name="connect_progress_summary">Attempt %1$s · %2$s s this attempt · %3$s s overall</string>
+    <string name="connect_progress_seconds">%1$s s</string>
+    <string name="connect_progress_pending">Pending</string>
+    <string name="connect_progress_skipped">No separate wait</string>
+    <string name="connect_progress_retrying">Waiting to retry; completed node timings are retained.</string>
+    <string name="connect_progress_failed">Connection interrupted; see the message below.</string>
+    <string name="connect_progress_cancelled">Connection stopped</string>
+    <string name="connect_progress_complete">First frame output · %1$s s</string>
+    <string name="connect_progress_user_wait">Waiting for the device or permission; remaining time cannot be estimated yet.</string>
+    <string name="connect_progress_overrun">Taking longer than past connections; waiting for the current step.</string>
+    <string name="connect_progress_estimate">About %1$s s left · typical total %2$s s · %3$s recent connections</string>
+</resources>

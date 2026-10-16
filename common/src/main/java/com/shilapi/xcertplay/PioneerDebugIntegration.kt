@@ -54,18 +54,22 @@ internal object PioneerDebugIntegration {
         }
     }
     fun attachHost(activity: Activity, state: () -> JSONObject, retryVpn: () -> Unit,
-                   videoGesture: () -> JSONObject) {
+                   videoGesture: (String) -> JSONObject, videoTap: (JSONObject) -> JSONObject, videoSnapshot: () -> ByteArray) {
         ensure(activity)
         host = WeakReference(activity)
         retry = retryVpn
         PioneerDebugRuntime.hostState = state
         PioneerDebugRuntime.videoGesture = videoGesture
+        PioneerDebugRuntime.videoTap = videoTap
+        PioneerDebugRuntime.videoSnapshot = videoSnapshot
     }
     fun detachHost(activity: Activity) {
         if (host.get() === activity) {
             host.clear(); retry = null
             PioneerDebugRuntime.hostState = ::idleState
             PioneerDebugRuntime.videoGesture = null
+            PioneerDebugRuntime.videoTap = null
+            PioneerDebugRuntime.videoSnapshot = null
         }
     }
     private fun idleState() = JSONObject().put("hostAttached", false)

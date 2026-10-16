@@ -320,6 +320,12 @@ class CarPlayVpnService : VpnService() {
                         pairings = current.pairings,
                         mfi = current.mfi,
                         listener = object : AirPlaySessionListener by current.listener {
+                            // Explicit forwarding also covers incremental builds made before the
+                            // default interface method existed; do not silently inherit its no-op.
+                            override fun onScreenFrameOutput(session: AirPlaySession, type: Int) {
+                                current.listener.onScreenFrameOutput(session, type)
+                            }
+
                             override fun onSessionActive(session: AirPlaySession) {
                                 if (current.listenerIdentity == null || !internalPeer) current.listener.onSessionActive(session)
                             }

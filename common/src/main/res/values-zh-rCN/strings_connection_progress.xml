@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="connect_progress_preparation">准备连接</string>
+    <string name="connect_progress_device">连接 iPhone</string>
+    <string name="connect_progress_control">配对与认证</string>
+    <string name="connect_progress_network">建立网络</string>
+    <string name="connect_progress_session">启动 CarPlay</string>
+    <string name="connect_progress_video">输出首帧</string>
+    <string name="connect_progress_waiting">等待开始连接</string>
+    <string name="connect_progress_learning">正在积累连接记录，成功连接后可显示预计耗时。</string>
+    <string name="connect_progress_summary">第 %1$s 次尝试 · 本次 %2$s 秒 · 总等待 %3$s 秒</string>
+    <string name="connect_progress_seconds">%1$s 秒</string>
+    <string name="connect_progress_pending">待执行</string>
+    <string name="connect_progress_skipped">无单独等待</string>
+    <string name="connect_progress_retrying">正在等待重试，保留本次各节点耗时。</string>
+    <string name="connect_progress_failed">连接中断，请查看下方提示。</string>
+    <string name="connect_progress_cancelled">连接已停止</string>
+    <string name="connect_progress_complete">首帧已输出 · 共 %1$s 秒</string>
+    <string name="connect_progress_user_wait">等待设备或授权，暂不估算剩余时间。</string>
+    <string name="connect_progress_overrun">已超过以往耗时，仍在等待当前环节。</string>
+    <string name="connect_progress_estimate">预计还需约 %1$s 秒 · 通常共 %2$s 秒 · 最近 %3$s 次同类连接</string>
+</resources>

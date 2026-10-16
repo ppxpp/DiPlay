@@ -131,7 +131,7 @@ class CarPlayMediaEngine(
         Log.i(TAG, "airplay screen key connectionID=${unsignedPlistDecimal(stream["streamConnectionID"])}")
         val screen = ScreenStream(key, session::logDebug)
         sink.setVideoDiagnosticHandler(type) {
-            if (it == "first frame rendered") session.videoFrameRendered()
+            if (it == "first frame rendered") session.videoFrameRendered(type)
             session.logDebug("Video: $it")
         }
         sink.setVideoRecoveryHandler(type) {

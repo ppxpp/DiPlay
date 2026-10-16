@@ -7,6 +7,7 @@ import com.shilapi.xcertplay.iap2.wire.Iap2Frame
 import com.shilapi.xcertplay.mfi.Iap2MfiAuthenticationClient
 import java.net.Inet6Address
 import java.net.InetAddress
+import com.shilapi.xcertplay.pioneer.LocalConnectionExperiments
 
 /**
  * The wired LIVI control sequence after a CSM channel is ready:
@@ -31,6 +32,7 @@ class Iap2WiredControlClient(
         onProgress: (String) -> Unit = {},
         retryNetworkReady: () -> Boolean = { false },
         maxStartRequests: Int = Int.MAX_VALUE,
+        onStartSessionSent: () -> Unit = {},
     ): Iap2WiredControlResult {
         require(maxStartRequests > 0)
         require(availableCurrentMilliAmps in 0..0xffff) {
@@ -69,8 +71,9 @@ class Iap2WiredControlClient(
         val vehicleStatus = Iap2VehicleStatusReporter(vehicleStatusProvider, onProgress)
         try {
             while (true) {
-                if (carPlayStartSessions > 0 && startRetries < 3 && startRequests < maxStartRequests && retryNetworkReady() && System.nanoTime() >= nextStartRetry) {
+                if (LocalConnectionExperiments.WIRED_START_REQUEST_RETRIES && carPlayStartSessions > 0 && startRetries < 3 && startRequests < maxStartRequests && retryNetworkReady() && System.nanoTime() >= nextStartRetry) {
                     send(carPlayStartSession(endpoint), deadlineNanos)
+                    onStartSessionSent()
                     startRetries++
                     startRequests++
                     nextStartRetry = System.nanoTime() + 5_000_000_000L
@@ -82,7 +85,9 @@ class Iap2WiredControlClient(
                 }
                 location.tick { send(it, deadlineNanos) }
                 vehicleStatus.tick { send(it, deadlineNanos) }
-                val pollTimeout = minOf(1_000L, vehicleStatus.pollTimeout(location.pollTimeout(remaining)))
+                val pollTimeout = if (LocalConnectionExperiments.SHORT_CONTROL_POLL)
+                    minOf(1_000L, vehicleStatus.pollTimeout(location.pollTimeout(remaining)))
+                else vehicleStatus.pollTimeout(location.pollTimeout(remaining))
                 val incoming = session.recv(pollTimeout)
                 if (incoming == null) {
                     if (session.isClosed) {
@@ -110,11 +115,12 @@ class Iap2WiredControlClient(
                         onProgress(carPlayAvailabilitySummary(incoming.payload))
                         // LIVI sends its wired answer on every availability notification; do not gate it on
                         // the phone's advertised availability boolean.
-                        if (startRequests >= maxStartRequests) {
+                        if (LocalConnectionExperiments.WIRED_START_REQUEST_RETRIES && startRequests >= maxStartRequests) {
                             if (!startLimitLogged) { onProgress("iap2 start-request limit reached count=$startRequests"); startLimitLogged = true }
                             continue
                         }
                         send(carPlayStartSession(endpoint), deadlineNanos)
+                        onStartSessionSent()
                         startRequests++
                         stage = Iap2WiredControlStage.CARPLAY_START_SENT
                         carPlayStartSessions++

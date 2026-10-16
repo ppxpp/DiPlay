@@ -79,11 +79,12 @@ internal class PioneerLwipBridge(
                         rebuild.compareAndSet(latch, null); latch.countDown()
                         log("LWIP_RECOVERY sessionId=$session attemptId=${PioneerLwipRuntime.attemptId} interfaceRebuilt=$rebuildOk")
                     }
-                    // Balanced batches: <=32 frames, <=64KiB, <=2ms per RX/TX turn.
+                    // Balanced data batches: <=32 frames, <=64KiB, <=2ms; the final empty
+                    // RX wait is independently bounded (1..4ms) for CPU/latency comparison.
                     var bytes = 0; var frames = 0
                     val receiveStart = System.nanoTime()
                     while (frames < 32 && bytes < 65536 && System.nanoTime() - receiveStart < 2_000_000) {
-                        val frame = ncm.recv(1) ?: break
+                        val frame = ncm.recv(PioneerDebugRuntime.lwipReceiveWaitMillis.toLong()) ?: break
                         val before = System.nanoTime(); PioneerLwipNative.input(frame)
                         inputTiming.record(System.nanoTime() - before)
                         rx++; frames++; bytes += frame.size
@@ -187,7 +188,8 @@ internal class PioneerLwipBridge(
                 var failureStart = 0L
                 var lastFailureLog = 0L
                 while (running.get()) {
-                    // 100ms reproduces the successful baseline; it no longer blocks raw lwIP.
+                    // Caller timeout after readiness. NcmUsbBridge applies upstream's 20ms cap
+                    // until the first complete OUT, including on the native path.
                     val result = ncm.sendBatchMeasured(frames, 100)
                     buildTiming.record(result.buildNs)
                     writeTiming.record(result.writeNs, !result.completed)
@@ -217,7 +219,8 @@ internal class PioneerLwipBridge(
                     // Authentication may take time: do not reset NCM before StartCarPlaySession.
                     val start = PioneerLwipRuntime.startRequestedNs
                     val elapsed = System.nanoTime() - maxOf(failureStart, start)
-                    if (start != 0L && elapsed > 5_000_000_000L && !interfaceRebuilt) {
+                    if (com.shilapi.xcertplay.pioneer.LocalConnectionExperiments.NCM_INTERFACE_REBUILD &&
+                        start != 0L && elapsed > 5_000_000_000L && !interfaceRebuilt) {
                         interfaceRebuilt = true
                         val latch = CountDownLatch(1); rebuildOk = false
                         check(rebuild.compareAndSet(null, latch))

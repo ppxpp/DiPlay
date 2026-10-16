@@ -63,9 +63,27 @@ def main():
     video.add_argument("--low-latency-decoder", choices=["ON", "OFF"])
     video.add_argument("--smooth-video", choices=["ON", "OFF"])
     video.add_argument("--direct-video-output", choices=["ON", "OFF"])
-    commands.add_parser("video-gesture", help="CarPlay主屏连续12次往返滑动；先显示地图页面")
+    tap = commands.add_parser("video-tap", help="点击当前CarPlay视频，归一化坐标0..1")
+    tap.add_argument("--x", type=float, required=True)
+    tap.add_argument("--y", type=float, required=True)
+    gesture = commands.add_parser("video-gesture", help="CarPlay主屏连续12次往返滑动或缩放；先显示地图页面")
+    gesture.add_argument("--kind", choices=["SWIPE", "PINCH"], default="SWIPE")
     commands.add_parser("network", help="读取 IPv6/TUN 内核计数、路由与可读防火墙规则")
     commands.add_parser("runtime", help="读取本进程CPU、线程及Logcat；不执行远程shell")
+    commands.add_parser("system-load", help="只读系统进程CPU计数、温度及解码能力")
+    for name in ("async-session-logs", "freescale-reorder"):
+        item = commands.add_parser(name)
+        item.add_argument("--mode", choices=["ON", "OFF"], required=True)
+    coalescing = commands.add_parser("touch-coalescing", help="仅已知车机：相邻未发送MOVE合并对照")
+    coalescing.add_argument("--mode", choices=["ON", "OFF"], required=True)
+    poll = commands.add_parser("lwip-poll-wait", help="仅已知车机：接收等待1/2/4ms对照")
+    poll.add_argument("--millis", type=int, choices=[1, 2, 4], required=True)
+    priority = commands.add_parser("video-priority", help="同连接视频输入线程优先级对比")
+    priority.add_argument("--mode", choices=["ON", "OFF"], required=True)
+    crypto = commands.add_parser("native-crypto", help="仅用于同连接加解密性能对照，重启恢复默认")
+    crypto.add_argument("--mode", choices=["ON", "OFF"], required=True)
+    snapshot = commands.add_parser("video-snapshot", help="读取当前CarPlay视频Surface的PNG，非系统截图")
+    snapshot.add_argument("--output", default="carplay-surface.png")
     batch = commands.add_parser("usb-tx-batch", help="实时切换NCM已排队数据聚合上限，1为原模式")
     batch.add_argument("--frames", type=int, choices=[1, 4, 8], required=True)
     commands.add_parser("usb-reset", help="会话完全停止后，通过已授权FD复位唯一iPhone；随后重新查询状态")
@@ -110,7 +128,10 @@ def main():
                     break
                 time.sleep(1)
         else:
-            fields = {"mode": args.mode} if args.cmd in ("usb-mode", "usb-configuration", "network-backend", "lwip-diagnostics", "phone-diagnostics") else {}
+            fields = {"mode": args.mode} if args.cmd in ("usb-mode", "usb-configuration", "network-backend", "lwip-diagnostics", "phone-diagnostics", "native-crypto", "video-priority", "touch-coalescing", "async-session-logs", "freescale-reorder") else {}
+            if args.cmd == "lwip-poll-wait": fields = {"millis": args.millis}
+            if args.cmd == "video-gesture": fields = {"kind": args.kind}
+            if args.cmd == "video-tap": fields = {"x": args.x, "y": args.y}
             if args.cmd == "toast": fields = {"text": args.text}
             if args.cmd == "usb-tx-batch": fields = {"frames": args.frames}
             if args.cmd == "video-settings":
@@ -120,7 +141,10 @@ def main():
                                   ("direct_video_output", "directVideoOutput")]:
                     if getattr(args, attr) is not None: fields[key] = getattr(args, attr) == "ON"
             reply, body = request(args, args.cmd, **fields)
-            if args.cmd in ("network", "runtime"):
+            if args.cmd == "video-snapshot":
+                Path(args.output).write_bytes(body)
+                print(f"已保存 {Path(args.output).resolve()} ({len(body)} bytes)")
+            elif args.cmd in ("network", "runtime", "system-load"):
                 print(body.decode("utf-8", errors="replace"))
             elif args.cmd != "export":
                 print(json.dumps(reply, ensure_ascii=False, indent=2))

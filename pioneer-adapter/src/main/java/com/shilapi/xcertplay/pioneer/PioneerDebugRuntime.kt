@@ -22,8 +22,15 @@ object PioneerDebugRuntime {
     @Volatile var control: ((String) -> Unit)? = null
     @Volatile var hostState: (() -> JSONObject)? = null
     @Volatile var videoSettings: ((JSONObject) -> JSONObject)? = null
-    @Volatile var videoGesture: (() -> JSONObject)? = null
+    @Volatile var videoGesture: ((String) -> JSONObject)? = null
+    @Volatile var videoTap: ((JSONObject) -> JSONObject)? = null
+    @Volatile var videoSnapshot: (() -> ByteArray)? = null
+    @Volatile var nativeCryptoComparisonEnabled: Boolean? = null
     @Volatile var phoneDiagnosticsEnabled = false
+    @Volatile var asyncSessionLogs = true
+    @Volatile var freescaleNoReorder = false
+    @Volatile var touchCoalescingComparisonEnabled = false
+    @Volatile var lwipReceiveWaitMillis = 1
     @Volatile var usbTxBatchFrames = 8
     @Volatile var redact: (String) -> String? = { it }
     private val main = Handler(Looper.getMainLooper())
@@ -72,12 +79,23 @@ object PioneerDebugRuntime {
         return value
     }
 
-    /** Called by a TCP worker; only schedules a bounded gesture on the host UI thread. */
-    fun startVideoGesture(): JSONObject {
+    fun tapVideo(request: JSONObject): JSONObject {
         val latch = CountDownLatch(1)
         var result: Result<JSONObject>? = null
         main.post {
-            try { result = runCatching { videoGesture?.invoke() ?: error("CarPlay host unavailable") } }
+            try { result = runCatching { videoTap?.invoke(request) ?: error("CarPlay host unavailable") } }
+            finally { latch.countDown() }
+        }
+        check(latch.await(2, TimeUnit.SECONDS)) { "CarPlay main thread did not respond" }
+        return checkNotNull(result).getOrThrow()
+    }
+
+    /** Called by a TCP worker; only schedules a bounded gesture on the host UI thread. */
+    fun startVideoGesture(kind: String = "SWIPE"): JSONObject {
+        val latch = CountDownLatch(1)
+        var result: Result<JSONObject>? = null
+        main.post {
+            try { result = runCatching { videoGesture?.invoke(kind) ?: error("CarPlay host unavailable") } }
             finally { latch.countDown() }
         }
         check(latch.await(2, TimeUnit.SECONDS)) { "CarPlay main thread did not respond" }

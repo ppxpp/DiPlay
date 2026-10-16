@@ -15,6 +15,7 @@ internal object PalSteeringWheelInputAdapter : SteeringWheelInputSource {
     @Volatile private var consumer: ((MediaCommand) -> Unit)? = null
     @Volatile private var report: (String) -> Unit = {}
     private var initialized = false
+    private var initializing = false
     private var registeredManager: Any? = null
     private var serviceCallback: Any? = null
     private var keyCallback: Any? = null
@@ -28,8 +29,19 @@ internal object PalSteeringWheelInputAdapter : SteeringWheelInputSource {
         consumer = onCommand
         this.report = report
         lastEvent = null
-        if (initialized) return
+        if (initialized || initializing) return
         val context = appContext ?: return
+        initializing = true
+        // Android 7 verifies/optimizes this provisioned DEX at first use. That can take seconds;
+        // steering-wheel integration must never block the host UI or USB startup callbacks.
+        Thread({ initializeSdk(context) }, "pioneer-pal-init").apply { isDaemon = true; start() }
+    }
+
+    private fun initializeSdk(context: Context) {
+        runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
+        val started = SystemClock.elapsedRealtime()
+        com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.log(context, "PAL_SDK_LOAD begin background=true")
+        report("Vehicle: PAL SDK initialization starting asynchronously")
         try {
             val loader = loadSdk(context)
             // Fail here rather than crashing the SDK's asynchronous worker thread.
@@ -47,12 +59,26 @@ internal object PalSteeringWheelInputAdapter : SteeringWheelInputSource {
                 }
                 null
             }
-            initialized = true
-            manager.getMethod("a", Context::class.java, callbackType).invoke(null, context, serviceCallback)
-            report("Vehicle: PAL initialization requested")
+            val loadMillis = SystemClock.elapsedRealtime() - started
+            com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.log(context, "PAL_SDK_LOAD loaded elapsedMs=$loadMillis")
+            // Preserve the SDK's original main-thread invocation; only DEX loading/verification
+            // moves to the worker. Some SDK versions create a Handler during initialization.
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    manager.getMethod("a", Context::class.java, callbackType).invoke(null, context, serviceCallback)
+                    synchronized(this) { initialized = true }
+                    com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.log(context, "PAL_SDK_LOAD connectedRequest totalMs=${SystemClock.elapsedRealtime() - started}")
+                    report("Vehicle: PAL initialization requested loadMs=$loadMillis totalMs=${SystemClock.elapsedRealtime() - started}")
+                } catch (error: Exception) {
+                    report("Vehicle: PAL unavailable ${error.javaClass.simpleName}: ${error.message}")
+                } finally {
+                    synchronized(this) { initializing = false }
+                }
+            }
         } catch (error: Exception) {
-            initialized = false
+            synchronized(this) { initialized = false }
             report("Vehicle: PAL unavailable ${error.javaClass.simpleName}: ${error.message}")
+            synchronized(this) { initializing = false }
         }
     }
 
