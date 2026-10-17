@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/socket.h>
+#include <poll.h>
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 #include <time.h>
@@ -179,10 +180,24 @@ static void scan_ports(void){
 }
 static void pump_tcp(struct connection *c) {
  if(!c->pcb)return;
- if(c->connecting){fd_set set;FD_ZERO(&set);FD_SET(c->fd,&set);struct timeval zero={0,0};
-  int r=select(c->fd+1,NULL,&set,NULL,&zero);if(r<=0)return;int e=0;socklen_t len=sizeof(e);getsockopt(c->fd,SOL_SOCKET,SO_ERROR,&e,&len);
-  if(e){note("LWIP_LOCAL_CONNECT_FAIL port=%u errno=%d",c->port,e);struct tcp_pcb *p=c->pcb;tcp_abort(p);return;}c->connecting=0;note("LWIP_LOCAL_CONNECTED port=%u",c->port);
+ if (c->connecting) {
+  // poll accepts process-wide descriptor numbers beyond FD_SETSIZE.
+  struct pollfd pending = {.fd = c->fd, .events = POLLOUT};
+  int ready = poll(&pending, 1, 0);
+  if (ready == 0 || (ready < 0 && errno == EINTR)) return;
+  int error = 0;
+  socklen_t length = sizeof(error);
+  if (ready < 0 || (pending.revents & POLLNVAL)) error = ready < 0 ? errno : EBADF;
+  else if (getsockopt(c->fd, SOL_SOCKET, SO_ERROR, &error, &length) < 0) error = errno;
+  if (error) {
+   note("LWIP_LOCAL_CONNECT_FAIL port=%u errno=%d", c->port, error);
+   tcp_abort(c->pcb);
+   return;
+  }
+  c->connecting = 0;
+  note("LWIP_LOCAL_CONNECTED port=%u", c->port);
  }
+
  if(c->rx_size){int n=send(c->fd,c->rx,c->rx_size>65535?65535:c->rx_size,MSG_NOSIGNAL);
   if(n>0){memmove(c->rx,c->rx+n,c->rx_size-n);c->rx_size-=n;c->progress_ns=mono_ns();if(!c->rx_size){timed(&tcp_rx_age,c->progress_ns-c->rx_since,0);c->rx_since=0;}tcp_recved(c->pcb,(u16_t)n);}
   else if(n<0&&(errno==EAGAIN||errno==EWOULDBLOCK))c->would_block++;

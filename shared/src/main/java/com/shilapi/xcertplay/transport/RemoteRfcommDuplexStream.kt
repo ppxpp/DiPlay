@@ -71,10 +71,15 @@ class RemoteRfcommDuplexStream private constructor(
     }
 
     companion object {
-        fun connect(host: String, port: Int, token: String, onDiagnostic: (String) -> Unit = {}): RemoteRfcommDuplexStream {
+        fun connect(host: String, port: Int, token: String, onDiagnostic: (String) -> Unit = {}): RemoteRfcommDuplexStream =
+            connect(host, port, token, onDiagnostic, null)
+
+        fun connect(host: String, port: Int, token: String, onDiagnostic: (String) -> Unit = {},
+            connection: RemoteGatewayConnection?): RemoteRfcommDuplexStream {
             require(host.isNotBlank() && port in 1..65535 && RemoteRfcommProtocol.validToken(token))
             val socket = Socket()
             try {
+                connection?.track(socket)
                 socket.connect(InetSocketAddress(host, port), 10000)
                 socket.tcpNoDelay = true
                 socket.soTimeout = 20000
@@ -92,10 +97,13 @@ class RemoteRfcommDuplexStream private constructor(
                 if (opened.type != RemoteRfcommProtocol.OPEN_OK) throw IOException("Gateway open failed: ${opened.payload.decodeToString()}")
                 socket.soTimeout = 0
                 onDiagnostic("Remote RFCOMM connected gateway=$host:$port localPort=${socket.localPort}")
+                connection?.checkActive()
                 return RemoteRfcommDuplexStream(socket, mac, input, output, onDiagnostic)
             } catch (error: Throwable) {
                 runCatching { socket.close() }
                 throw error
+            } finally {
+                connection?.release(socket)
             }
         }
     }

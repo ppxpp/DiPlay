@@ -16,7 +16,6 @@ import android.os.Looper
 import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.RandomAccessFile
 import java.net.Inet4Address
@@ -24,8 +23,6 @@ import java.net.InetAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Executors
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -33,8 +30,7 @@ import java.util.zip.ZipOutputStream
 class PioneerDebugService : Service() {
     @Volatile private var closed = false
     @Volatile private var listener: ServerSocket? = null
-    private val clients = ConcurrentHashMap.newKeySet<Socket>()
-    private val workers = Executors.newFixedThreadPool(3)
+    private val connections = PioneerDebugConnections(::handle)
 
     override fun onCreate() {
         super.onCreate()
@@ -47,7 +43,7 @@ class PioneerDebugService : Service() {
         val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, "pioneer-debug") else Notification.Builder(this)
         val open = PendingIntent.getActivity(this, 0, Intent(this, PioneerDebugActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         startForeground(99110, builder.setSmallIcon(android.R.drawable.ic_menu_info_details)
-            .setContentTitle("DiPlay 局域网调试").setContentText("点击查看地址、端口与口令").setContentIntent(open).build())
+            .setContentTitle("DiPlay 局域网调试").setContentText("点击查看地址与端口").setContentIntent(open).build())
         Thread(::listen, "pioneer-debug-listener").start()
     }
     override fun onBind(intent: Intent?): IBinder? = null
@@ -69,28 +65,12 @@ class PioneerDebugService : Service() {
         val server = listener ?: run { PioneerDebugRuntime.listenerState = "8721 / 9911 / 9912 均不可用"; stopSelf(); return }
         while (!closed) {
             try {
-                val socket = server.accept().apply { soTimeout = 30_000 }
-                clients.add(socket)
-                workers.execute {
-                    socket.use { runCatching { handle(it) }.onFailure { error ->
-                        runCatching { send(it, JSONObject().put("ok", false).put("error", error.message ?: error.javaClass.simpleName)) }
-                    } }
-                    clients.remove(socket)
-                }
+                connections.accept(server.accept())
             } catch (error: Exception) { if (!closed) PioneerDebugRuntime.log(this, "TCP accept failed: ${error.message}"); break }
         }
     }
 
-    private fun handle(socket: Socket) {
-        val input = socket.getInputStream()
-        val header = ByteArrayOutputStream()
-        while (true) {
-            val next = input.read(); require(next >= 0) { "Incomplete header" }
-            if (next == 10) break
-            require(header.size() < 16_384) { "Header too large" }; header.write(next)
-        }
-        val request = JSONObject(header.toString("UTF-8"))
-        require(request.optString("token") == PioneerDebugRuntime.token(this)) { "调试口令不匹配" }
+    private fun handle(socket: Socket, request: JSONObject) {
         val reply = JSONObject().put("ok", true)
         when (val command = request.getString("cmd")) {
             "async-session-logs", "freescale-reorder" -> {
@@ -108,6 +88,26 @@ class PioneerDebugService : Service() {
                 PioneerDebugRuntime.audioClockTrimEnabled = mode == "ON"
                 PioneerDebugRuntime.log(this, "AUDIO_CLOCK_TRIM enabled=${PioneerDebugRuntime.audioClockTrimEnabled}")
                 send(socket, reply.put("mode", mode).put("message", "音乐下次写入生效；进程重启恢复设备默认"))
+            }
+            "audio-source" -> {
+                require(PioneerUsbPolicy.matchesDevice())
+                val mode = request.optString("mode", "STATUS")
+                require(mode in listOf("STATUS", "FM", "WECARFLOW", "OFF", "NEXT", "BT"))
+                val cls = Class.forName("jp.pioneer.ceam.MediaManager.MediaController")
+                val controller = cls.getMethod("getInstance").invoke(null)
+                fun read(name: String): Int = cls.getMethod(name, Int::class.javaPrimitiveType).invoke(controller, 1) as Int
+                val previous = read("getCurSource")
+                val result = when (mode) {
+                    "STATUS" -> null
+                    "NEXT" -> cls.getMethod("change2NextSource", Int::class.javaPrimitiveType).invoke(controller, 1)
+                    else -> cls.getMethod("change2Source", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+                        .invoke(controller, 1, when (mode) { "FM" -> 201; "OFF" -> 0; "BT" -> 205; else -> 300 })
+                }
+                val state = JSONObject().put("previous", previous).put("source", read("getCurSource"))
+                    .put("mix", read("getCurMix")).put("soundSwitch", read("getCurSoundSwitchStatus"))
+                    .put("mode", mode).put("result", result ?: JSONObject.NULL)
+                PioneerDebugRuntime.log(this, "AUDIO_SOURCE $state")
+                send(socket, reply.put("audio", state))
             }
             "system-load" -> send(socket, reply, PioneerSystemLoad.snapshot().toString(2).toByteArray())
             "touch-coalescing" -> {
@@ -145,6 +145,27 @@ class PioneerDebugService : Service() {
             "video-settings" -> {
                 val settings = PioneerDebugRuntime.videoSettings?.invoke(request) ?: error("Open DiPlay first")
                 send(socket, reply.put("settings", settings).put("message", "设置下次连接生效；当前会话不变"))
+            }
+            "restart-app" -> {
+                require(PioneerUsbPolicy.matchesDevice())
+                val intent = android.content.Intent().setClassName(packageName, "com.shilapi.xcertplay.DiPlayActivity")
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                val pending = PendingIntent.getActivity(this, 99112, intent,
+                    PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                val alarms = getSystemService(android.app.AlarmManager::class.java)
+                PioneerDebugRuntime.log(this, "SELF_PROCESS_RESTART scheduled pid=${android.os.Process.myPid()}")
+                send(socket, reply.put("message", "本应用进程将在500ms后结束，随后3秒重新打开；请检测新PID及新鲜状态"))
+                Thread({
+                    Thread.sleep(500L)
+                    // Arm immediately before killing, independent of a stalled UI thread.
+                    alarms.setExact(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                        android.os.SystemClock.elapsedRealtime() + 3_000L, pending)
+                    android.os.Process.killProcess(android.os.Process.myPid())
+                }, "self-restart-probe").start()
+            }
+            "host-ui" -> {
+                require(PioneerUsbPolicy.matchesDevice())
+                send(socket, reply.put("ui", PioneerDebugRuntime.runHostUi(request.getString("action"))))
             }
             "video-tap" -> send(socket, reply.put("tap", PioneerDebugRuntime.tapVideo(request)))
             "video-gesture" -> send(socket, reply.put("gesture", PioneerDebugRuntime.startVideoGesture(request.optString("kind", "SWIPE"))))
@@ -199,7 +220,10 @@ class PioneerDebugService : Service() {
                 val archive = archive()
                 try {
                     send(socket, reply.put("size", archive.length()))
-                    archive.inputStream().use { it.copyTo(socket.getOutputStream()) }; socket.getOutputStream().flush()
+                    connections.write(socket) {
+                        archive.inputStream().use { it.copyTo(socket.getOutputStream()) }
+                        socket.getOutputStream().flush()
+                    }
                 } finally { archive.delete() }
             }
             "start-wired", "stop", "retry-vpn" -> {
@@ -238,16 +262,74 @@ class PioneerDebugService : Service() {
                 getSharedPreferences("pioneer-debug", MODE_PRIVATE).edit().putString("network_backend", mode).commit()
                 send(socket, reply.put("mode", mode).put("message", "下次连接生效"))
             }
-            "update" -> update(socket, request, reply)
+            "update-storage", "clear-update-cache" -> {
+                val updates = File(cacheDir, "pioneer-update")
+                var reclaimed = 0L
+                if (command == "clear-update-cache") {
+                    PioneerDebugUpdateGuard.withCacheMaintenance {
+                        updates.listFiles()?.filter {
+                            it.isFile && it.name.endsWith(".apk") && PioneerDebugUpdateGuard.canDelete(it)
+                        }?.forEach {
+                            val bytes = it.length()
+                            if (it.delete()) {
+                                reclaimed += bytes
+                                File(it.path + ".installing").delete()
+                            }
+                        }
+                    }
+                }
+                val disk = android.os.StatFs(cacheDir.absolutePath)
+                send(socket, reply.put("availableBytes", disk.availableBytes).put("reclaimedBytes", reclaimed)
+                    .put("updateApks", org.json.JSONArray(updates.listFiles()?.filter { it.isFile }?.map {
+                        JSONObject().put("name", it.name).put("bytes", it.length())
+                    } ?: emptyList<JSONObject>())))
+            }
+            "companion-status" -> {
+                val info = packageManager.getPackageInfo("com.tencent.wecarflow", PackageManager.GET_SIGNATURES or PackageManager.GET_SERVICES)
+                val details = JSONObject().put("package", info.packageName).put("versionCode", info.versionCode).put("versionName", info.versionName)
+                    .put("stopped", (info.applicationInfo!!.flags and android.content.pm.ApplicationInfo.FLAG_STOPPED) != 0)
+                val guard = info.services?.firstOrNull { it.name == "com.tencent.wecarflow.carplayguard.PlaybackGuardService" }
+                details.put("guardProcess", guard?.processName).put("guardEnabled", guard?.enabled)
+                details.put("certificateSha256", org.json.JSONArray(info.signatures?.map { signature ->
+                    java.security.MessageDigest.getInstance("SHA-256").digest(signature.toByteArray()).joinToString("") { "%02x".format(it) }
+                } ?: emptyList<String>()))
+                if (guard?.processName == "com.tencent.wecarflow:carplayguard") {
+                    val connected = java.util.concurrent.CountDownLatch(1)
+                    val peer = java.util.concurrent.atomic.AtomicReference<android.os.IBinder?>()
+                    val connection = object : android.content.ServiceConnection {
+                        override fun onServiceConnected(name: android.content.ComponentName, service: android.os.IBinder) { peer.set(service); connected.countDown() }
+                        override fun onServiceDisconnected(name: android.content.ComponentName) { peer.set(null) }
+                    }
+                    var bound = false
+                    try {
+                        bound = bindService(Intent().setClassName(info.packageName, guard.name), connection, android.content.Context.BIND_AUTO_CREATE)
+                        if (bound && connected.await(4, java.util.concurrent.TimeUnit.SECONDS)) {
+                            val data = android.os.Parcel.obtain(); val response = android.os.Parcel.obtain()
+                            try {
+                                data.writeInterfaceToken("com.shilapi.xcertplay.vehicle.LocalPlaybackGuard.v1")
+                                if (peer.get()?.transact(5, data, response, 0) == true) {
+                                    response.readException()
+                                    val state = response.readBundle(javaClass.classLoader)
+                                    details.put("bridge", JSONObject().also { json -> state?.keySet()?.forEach { key -> json.put(key, org.json.JSONObject.wrap(state.get(key))) } })
+                                }
+                            } finally { data.recycle(); response.recycle() }
+                        } else details.put("bridgePending", bound)
+                    } finally { if (bound) unbindService(connection) }
+                }
+                send(socket, reply.put("companion", details))
+            }
+            "update" -> send(socket, PioneerDebugUpdater(this).receive(socket, request))
             else -> error("未知指令 $command")
         }
     }
 
     private fun send(socket: Socket, reply: JSONObject, data: ByteArray? = null) {
         if (data != null) reply.put("size", data.size)
-        val output = socket.getOutputStream(); output.write((reply.toString() + "\n").toByteArray(Charsets.UTF_8))
-        if (data != null) output.write(data)
-        output.flush()
+        connections.write(socket) {
+            val output = socket.getOutputStream(); output.write((reply.toString() + "\n").toByteArray(Charsets.UTF_8))
+            if (data != null) output.write(data)
+            output.flush()
+        }
     }
 
     fun status(): JSONObject {
@@ -264,6 +346,7 @@ class PioneerDebugService : Service() {
                 .put("permission", getSystemService(UsbManager::class.java).hasPermission(device))
         }
         return JSONObject().put("package", packageName).put("version", packageManager.getPackageInfo(packageName, 0).versionName)
+            .put("versionCode", packageManager.getPackageInfo(packageName, 0).versionCode)
             .put("port", PioneerDebugRuntime.port).put("listener", PioneerDebugRuntime.listenerState)
             .put("addresses", JSONArray(addresses())).put("vpn", vpn).put("host", PioneerDebugRuntime.snapshot())
             .put("usbConfigurationMode", PioneerUsbPolicy.configurationMode(this))
@@ -290,6 +373,7 @@ class PioneerDebugService : Service() {
             .put("lwipReceiveWaitMillis", PioneerDebugRuntime.lwipReceiveWaitMillis)
             .put("asyncSessionLogs", PioneerDebugRuntime.asyncSessionLogs)
             .put("freescaleNoReorderRequested", PioneerDebugRuntime.freescaleNoReorder)
+            .put("appearanceDeclarationsEnabled", PioneerDebugRuntime.appearanceDeclarationsEnabled)
             .put("audioClockTrimEnabled", PioneerDebugRuntime.audioClockTrimEnabled)
             .put("audioClockTrimOverride", PioneerDebugRuntime.audioClockTrimOverride ?: JSONObject.NULL)
             .put("memory", memorySnapshot())
@@ -366,36 +450,9 @@ class PioneerDebugService : Service() {
         return target
     }
 
-    private fun update(socket: Socket, request: JSONObject, reply: JSONObject) {
-        val state = PioneerDebugRuntime.snapshot()
-        require(!state.optBoolean("controllerRunning") && !state.optBoolean("backgroundSession") && !state.optBoolean("hostAttached")) {
-            "请先 stop 并等待 hostAttached/controllerRunning/backgroundSession 都为 false，再更新"
-        }
-        val size = request.getLong("size"); require(size in 1..128L * 1024 * 1024) { "APK size invalid" }
-        val directory = File(cacheDir, "pioneer-update").apply { mkdirs() }
-        directory.listFiles()?.filter { it.name.endsWith(".apk") }?.forEach { it.delete() }
-        val file = File.createTempFile("diplay-", ".apk", directory)
-        try {
-            file.outputStream().use { output ->
-                val input = socket.getInputStream(); val buffer = ByteArray(65536); var remaining = size
-                while (remaining > 0) {
-                    val count = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
-                    require(count > 0) { "APK upload interrupted" }; output.write(buffer, 0, count); remaining -= count
-                }
-            }
-            val info = packageManager.getPackageArchiveInfo(file.absolutePath, PackageManager.GET_SIGNATURES) ?: error("Invalid APK")
-            val current = packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES)
-            require(info.packageName == packageName) { "APK package mismatch" }
-            require(!info.signatures.isNullOrEmpty() && info.signatures?.toList() == current.signatures?.toList()) { "APK signature mismatch" }
-            startActivity(Intent(this, PioneerDebugActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("install_path", file.absolutePath))
-            PioneerDebugRuntime.log(this, "APK uploaded; owner confirmation requested")
-            send(socket, reply.put("message", "APK 已接收，请在车机确认安装，完成后重新打开 DiPlay"))
-        } catch (error: Throwable) { file.delete(); throw error }
-    }
-
     override fun onDestroy() {
-        closed = true; runCatching { listener?.close() }; clients.forEach { runCatching { it.close() } }
-        workers.shutdownNow(); PioneerDebugRuntime.port = 0; PioneerDebugRuntime.listenerState = "已停止"
+        closed = true; runCatching { listener?.close() }; connections.close()
+        PioneerDebugRuntime.port = 0; PioneerDebugRuntime.listenerState = "已停止"
         super.onDestroy()
     }
     companion object {

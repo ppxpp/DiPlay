@@ -1,0 +1,265 @@
+name: Publish DiPlay update
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Update channel
+        type: choice
+        options:
+          - stable
+          - beta
+        default: stable
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-diplay-android-${{ github.event.inputs.channel || 'stable' }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: release
+    env:
+      APP_ID: diplay
+      PLATFORM: android
+      CHANNEL: ${{ github.event.inputs.channel || 'stable' }}
+      R2_ASSETS_BUCKET: ${{ vars.R2_ASSETS_BUCKET }}
+      R2_META_BUCKET: ${{ vars.R2_META_BUCKET }}
+      UPDATE_API_BASE: ${{ vars.UPDATE_API_BASE }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check release configuration
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          SIGNING_KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          DIPLAY_IDENTITY_PK8_BASE64: ${{ secrets.DIPLAY_IDENTITY_PK8_BASE64 }}
+          DIPLAY_CERTIFICATE_P7B_BASE64: ${{ secrets.DIPLAY_CERTIFICATE_P7B_BASE64 }}
+        run: |
+          missing=0
+          for name in R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ASSETS_BUCKET R2_META_BUCKET UPDATE_API_BASE SIGNING_KEYSTORE_BASE64 SIGNING_KEYSTORE_PASSWORD SIGNING_KEY_ALIAS SIGNING_KEY_PASSWORD DIPLAY_IDENTITY_PK8_BASE64 DIPLAY_CERTIFICATE_P7B_BASE64; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Set $name before publishing a release."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-37.0 build-tools;36.0.0 ndk;28.2.13676358
+
+      - name: Provision shared signing keystore
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          SIGNING_KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          mkdir -p .signing
+          printf '%s' "$SIGNING_KEYSTORE_BASE64" | base64 -d > .signing/repack.keystore
+          {
+            echo "storeFile=.signing/repack.keystore"
+            echo "storePassword=$SIGNING_KEYSTORE_PASSWORD"
+            echo "keyAlias=$SIGNING_KEY_ALIAS"
+            echo "keyPassword=$SIGNING_KEY_PASSWORD"
+          } > .signing/signing.properties
+          chmod 600 .signing/signing.properties
+
+      - name: Provision runtime authentication assets
+        env:
+          IDENTITY_PK8_BASE64: ${{ secrets.DIPLAY_IDENTITY_PK8_BASE64 }}
+          CERTIFICATE_P7B_BASE64: ${{ secrets.DIPLAY_CERTIFICATE_P7B_BASE64 }}
+        run: |
+          mkdir -p .private/runtime-assets/offline-mfi
+          printf '%s' "$IDENTITY_PK8_BASE64" | base64 -d > .private/runtime-assets/offline-mfi/identity.pk8
+          printf '%s' "$CERTIFICATE_P7B_BASE64" | base64 -d > .private/runtime-assets/offline-mfi/certificate.p7b
+          chmod 600 .private/runtime-assets/offline-mfi/identity.pk8 .private/runtime-assets/offline-mfi/certificate.p7b
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Test, lint and build signed release
+        run: >-
+          ./gradlew
+          :shared:testDebugUnitTest
+          :common:testDebugUnitTest
+          :mobile:lintRelease
+          :mobile:assembleRelease
+          --stacktrace
+
+      - name: Read and verify the built version
+        run: |
+          APK="mobile/build/outputs/apk/release/mobile-release.apk"
+          test -f "$APK" || { echo "::error::Release APK was not produced"; exit 1; }
+          AAPT="$(find "${ANDROID_HOME:-${ANDROID_SDK_ROOT}}/build-tools" -mindepth 2 -maxdepth 2 -type f -name aapt | sort -V | tail -n 1)"
+          test -n "$AAPT" || { echo "::error::aapt was not found"; exit 1; }
+          BADGING="$("$AAPT" dump badging "$APK")"
+          VERSION_NAME="$(printf '%s\n' "$BADGING" | sed -n "s/^package:.*versionName='\([^']*\)'.*/\1/p" | head -n 1)"
+          VERSION_CODE="$(printf '%s\n' "$BADGING" | sed -n "s/^package:.*versionCode='\([^']*\)'.*/\1/p" | head -n 1)"
+          APP_VERSION="$(printf '%s' "$VERSION_NAME" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)"
+          test -n "$VERSION_NAME" || { echo "::error::Could not read versionName"; exit 1; }
+          test -n "$VERSION_CODE" || { echo "::error::Could not read versionCode"; exit 1; }
+          test -n "$APP_VERSION" || { echo "::error::versionName must start with x.y.z: $VERSION_NAME"; exit 1; }
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            case "${GITHUB_REF_NAME}" in
+              "v${APP_VERSION}"|"v${APP_VERSION}"-*) ;;
+              *)
+                echo "::error::Tag ${GITHUB_REF_NAME} does not match versionName ${VERSION_NAME}"
+                exit 1
+                ;;
+            esac
+          fi
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "Built $VERSION_NAME ($VERSION_CODE) as $APP_VERSION"
+
+      - name: Ensure versionCode is newer than the published release
+        run: |
+          API_URL="${UPDATE_API_BASE%/}/api/v1/apps/${APP_ID}/${PLATFORM}/${CHANNEL}/latest"
+          HTTP_CODE="$(curl -sS -o "$RUNNER_TEMP/current-release.json" -w '%{http_code}' "$API_URL" || true)"
+          case "$HTTP_CODE" in
+            404)
+              echo "No published release for ${APP_ID}/${PLATFORM}/${CHANNEL} yet."
+              ;;
+            200)
+              CURRENT_VERSION_CODE="$(jq -r '.versionCode // empty' "$RUNNER_TEMP/current-release.json")"
+              case "$CURRENT_VERSION_CODE" in
+                ''|*[!0-9]*)
+                  echo "::error::The published manifest has no numeric versionCode"
+                  exit 1
+                  ;;
+              esac
+              if [ "$VERSION_CODE" -le "$CURRENT_VERSION_CODE" ]; then
+                echo "::error::versionCode $VERSION_CODE must be greater than the published versionCode $CURRENT_VERSION_CODE"
+                exit 1
+              fi
+              echo "versionCode $CURRENT_VERSION_CODE -> $VERSION_CODE"
+              ;;
+            *)
+              echo "::error::Could not read the published release (HTTP $HTTP_CODE)"
+              exit 1
+              ;;
+          esac
+
+      - name: Prepare release manifest
+        run: |
+          RELEASE_DIR="$RUNNER_TEMP/release"
+          mkdir -p "$RELEASE_DIR"
+          APK_NAME="DiPlay-${APP_VERSION}.apk"
+          cp mobile/build/outputs/apk/release/mobile-release.apk "$RELEASE_DIR/$APK_NAME"
+          (
+            cd "$RELEASE_DIR"
+            sha256sum "$APK_NAME" > SHA256SUMS.txt
+          )
+          APK_SHA="$(sha256sum "$RELEASE_DIR/$APK_NAME" | awk '{print $1}')"
+          APK_SIZE="$(stat -c%s "$RELEASE_DIR/$APK_NAME")"
+          ASSET_PREFIX="apps/${APP_ID}/${PLATFORM}/${CHANNEL}/${APP_VERSION}"
+          jq -n \
+            --arg version "$APP_VERSION" \
+            --argjson versionCode "$VERSION_CODE" \
+            --arg publishedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg name "$APK_NAME" \
+            --arg key "$ASSET_PREFIX/$APK_NAME" \
+            --arg checksumsKey "$ASSET_PREFIX/SHA256SUMS.txt" \
+            --arg sha256 "$APK_SHA" \
+            --argjson size "$APK_SIZE" \
+            '{
+              schemaVersion: 1,
+              version: $version,
+              versionCode: $versionCode,
+              publishedAt: $publishedAt,
+              mandatory: false,
+              artifacts: [{
+                name: $name,
+                arch: "universal",
+                key: $key,
+                checksumsKey: $checksumsKey,
+                sha256: $sha256,
+                size: $size
+              }]
+            }' > "$RELEASE_DIR/latest.json"
+          echo "RELEASE_DIR=$RELEASE_DIR" >> "$GITHUB_ENV"
+          echo "APK_NAME=$APK_NAME" >> "$GITHUB_ENV"
+          echo "ASSET_PREFIX=$ASSET_PREFIX" >> "$GITHUB_ENV"
+
+      - name: Upload assets and update latest pointer
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: WHEN_REQUIRED
+          AWS_RESPONSE_CHECKSUM_VALIDATION: WHEN_REQUIRED
+          AWS_EC2_METADATA_DISABLED: "true"
+        run: |
+          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          META_PREFIX="apps/${APP_ID}/${PLATFORM}/${CHANNEL}"
+          aws s3 cp "$RELEASE_DIR/$APK_NAME" \
+            "s3://${R2_ASSETS_BUCKET}/${ASSET_PREFIX}/${APK_NAME}" \
+            --endpoint-url "$ENDPOINT" \
+            --content-type "application/vnd.android.package-archive" \
+            --cache-control "public, max-age=31536000, immutable" \
+            --only-show-errors
+          aws s3 cp "$RELEASE_DIR/SHA256SUMS.txt" \
+            "s3://${R2_ASSETS_BUCKET}/${ASSET_PREFIX}/SHA256SUMS.txt" \
+            --endpoint-url "$ENDPOINT" \
+            --content-type "text/plain; charset=utf-8" \
+            --cache-control "public, max-age=31536000, immutable" \
+            --only-show-errors
+          aws s3 cp "$RELEASE_DIR/latest.json" \
+            "s3://${R2_META_BUCKET}/${META_PREFIX}/releases/${APP_VERSION}.json" \
+            --endpoint-url "$ENDPOINT" \
+            --content-type "application/json; charset=utf-8" \
+            --cache-control "no-store" \
+            --only-show-errors
+          # The pointer is written last so clients never see a manifest before its files exist.
+          aws s3 cp "$RELEASE_DIR/latest.json" \
+            "s3://${R2_META_BUCKET}/${META_PREFIX}/latest.json" \
+            --endpoint-url "$ENDPOINT" \
+            --content-type "application/json; charset=utf-8" \
+            --cache-control "no-store" \
+            --only-show-errors
+
+      - name: Verify the public update endpoint
+        run: |
+          API_URL="${UPDATE_API_BASE%/}/api/v1/apps/${APP_ID}/${PLATFORM}/${CHANNEL}/latest"
+          for attempt in 1 2 3 4 5; do
+            if BODY="$(curl -fsS "$API_URL")" && printf '%s' "$BODY" | jq -e --arg version "$APP_VERSION" '.version == $version' > /dev/null; then
+              echo "Verified $API_URL -> $APP_VERSION"
+              exit 0
+            fi
+            echo "Waiting for $API_URL to report $APP_VERSION (attempt $attempt)"
+            sleep 2
+          done
+          echo "::error::The update endpoint did not return $APP_VERSION"
+          exit 1
+
+      - name: Keep a workflow copy of the release
+        uses: actions/upload-artifact@v4
+        with:
+          name: DiPlay-${{ env.APP_VERSION }}-${{ env.CHANNEL }}
+          path: |
+            ${{ env.RELEASE_DIR }}/${{ env.APK_NAME }}
+            ${{ env.RELEASE_DIR }}/SHA256SUMS.txt
+            ${{ env.RELEASE_DIR }}/latest.json
+          if-no-files-found: error
+          retention-days: 14

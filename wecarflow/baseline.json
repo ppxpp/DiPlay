@@ -1,0 +1,11 @@
+{
+  "packageName": "com.tencent.wecarflow",
+  "originalVersion": "2.7.1.36971303",
+  "apkSha256": "e8c1671fc005527de3bb49b6733069c701cd5f86c5ec851e79b29aa09bcf7111",
+  "apktoolVersion": "3.0.1",
+  "jdkMajor": 17,
+  "androidPlatform": "android-37.0",
+  "buildToolsVersion": "36.0.0",
+  "minimumApi": 21,
+  "vehicleAbi": "armeabi-v7a"
+}

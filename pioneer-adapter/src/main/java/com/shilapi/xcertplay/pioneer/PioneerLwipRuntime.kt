@@ -4,6 +4,7 @@ import android.content.Context
 import java.io.Closeable
 import java.net.InetAddress
 import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -31,6 +32,9 @@ object PioneerLwipRuntime {
     private val ids = AtomicLong()
     val peerUdpPorts = ArrayBlockingQueue<Int>(128)
     val portCommands = ArrayBlockingQueue<PortCommand>(256)
+    // Release work must remain reachable even when the bounded add queue is full.
+    private val portReleases = ConcurrentLinkedQueue<PortCommand>()
+    fun pollPortCommand(): PortCommand? = portReleases.poll() ?: portCommands.poll()
     class PortCommand(val session: Long, val port: Int, val udp: Boolean, val add: Boolean) {
         val done = CountDownLatch(1)
         val createdNs = System.nanoTime()
@@ -53,7 +57,7 @@ object PioneerLwipRuntime {
         active = false; firstTxReady = false; tcpAccepted = false
         summary = "stopped sessionId=$id"
         peerUdpPorts.clear()
-        while (true) { val c = portCommands.poll() ?: break; c.done.countDown() }
+        while (true) { val c = pollPortCommand() ?: break; c.done.countDown() }
     }
     fun milestone(id: Long, stage: String, atNs: Long = System.nanoTime()): String? = synchronized(this) {
         if (!active || id != sessionId) return null
@@ -78,22 +82,30 @@ object PioneerLwipRuntime {
         check(id == expectedSession) { "Stale lwIP port registration sessionId=$expectedSession current=$id" }
         val command = PortCommand(id, port, udp, true)
         check(port in 1..65535 && portCommands.offer(command)) { "lwIP port registration queue full" }
-        if (!command.done.await(2, TimeUnit.SECONDS) || !command.success || !active || sessionId != id) {
+        try {
+            check(command.done.await(2, TimeUnit.SECONDS) && command.success && active && sessionId == id) {
+                "lwIP port registration failed sessionId=$id port=$port udp=$udp"
+            }
+        } catch (error: Throwable) {
+            // The owner serializes add with this cancellation. Either it skips the add,
+            // or we compensate its successful add exactly once on the release channel.
             synchronized(command) {
                 command.cancelled = true
-                if (command.success && active && sessionId == id) portCommands.offer(PortCommand(id,port,udp,false))
+                if (command.success) releasePort(id, port, udp)
             }
-            error("lwIP port registration failed sessionId=$id port=$port udp=$udp")
+            if (error is InterruptedException) Thread.currentThread().interrupt()
+            throw error
         }
         val released = java.util.concurrent.atomic.AtomicBoolean(false)
         return Closeable {
-            if (released.compareAndSet(false, true) && active && sessionId == id) {
-                val remove = PortCommand(id, port, udp, false)
-                check(portCommands.offer(remove)) { "lwIP port removal queue full" }
-                // Close may run on a teardown thread. No wait for owner callbacks here.
-            }
+            if (released.compareAndSet(false, true)) releasePort(id, port, udp)
         }
     }
+    @Synchronized private fun releasePort(id: Long, port: Int, udp: Boolean) {
+        if (active && sessionId == id) portReleases.add(PortCommand(id, port, udp, false))
+        // Session shutdown itself destroys all native listeners for an expired lease.
+    }
+
     fun registerPeerUdp(address: InetAddress, port: Int, expectedSession: Long = sessionId) {
         if (active && expectedSession == sessionId && address.hostAddress == "127.0.0.2" && port in 1..65535)
             check(peerUdpPorts.offer(port)) { "lwIP peer UDP registration queue full" }

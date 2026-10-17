@@ -45,9 +45,13 @@ object RemoteGatewayDiscovery {
         }
     }
 
-    fun connect(context: Context, gateway: RemoteRfcommGateway, log: (String) -> Unit): RemoteRfcommDuplexStream {
-        val endpoint = find(context, gateway.gatewayBluetoothMac, log)
-        val stream = RemoteRfcommDuplexStream.connect(endpoint.host, endpoint.port, gateway.token, log)
+    fun connect(context: Context, gateway: RemoteRfcommGateway, log: (String) -> Unit): RemoteRfcommDuplexStream =
+        connect(context, gateway, log, null)
+
+    fun connect(context: Context, gateway: RemoteRfcommGateway, log: (String) -> Unit,
+        connection: RemoteGatewayConnection?): RemoteRfcommDuplexStream {
+        val endpoint = find(context, gateway.gatewayBluetoothMac, log, connection)
+        val stream = RemoteRfcommDuplexStream.connect(endpoint.host, endpoint.port, gateway.token, log, connection)
         if (!stream.gatewayBluetoothMac.equals(gateway.gatewayBluetoothMac, ignoreCase = true)) {
             stream.close()
             throw IOException("Gateway identity mismatch")
@@ -55,9 +59,15 @@ object RemoteGatewayDiscovery {
         return stream
     }
 
+    fun find(context: Context, identity: String? = null, log: (String) -> Unit = {}): Endpoint =
+        find(context, identity, log, null)
+
     @Suppress("DEPRECATION")
-    fun find(context: Context, identity: String? = null, log: (String) -> Unit = {}): Endpoint {
-        discoverOverBroadcast(identity, log)?.let { return it }
+    fun find(context: Context, identity: String?, log: (String) -> Unit,
+        connection: RemoteGatewayConnection?): Endpoint {
+        connection?.checkActive()
+        discoverOverBroadcast(identity, log, connection)?.let { return it }
+        connection?.checkActive()
 
         val nsd = context.applicationContext.getSystemService(Context.NSD_SERVICE) as NsdManager
         val candidates = LinkedBlockingQueue<NsdServiceInfo>()
@@ -86,10 +96,12 @@ object RemoteGatewayDiscovery {
             acquire()
         }
         try {
+            connection?.checkActive()
             nsd.discoverServices(RemoteRfcommProtocol.SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, discovery)
             while (System.nanoTime() < deadline) {
+                connection?.checkActive()
                 failure.get()?.let { throw IOException(it) }
-                val candidate = candidates.poll(500, TimeUnit.MILLISECONDS) ?: continue
+                val candidate = candidates.poll(100, TimeUnit.MILLISECONDS) ?: continue
                 val resolved = AtomicReference<NsdServiceInfo?>()
                 val done = CountDownLatch(1)
                 nsd.resolveService(candidate, object : NsdManager.ResolveListener {
@@ -103,7 +115,12 @@ object RemoteGatewayDiscovery {
                     }
                 })
                 val remaining = deadline - System.nanoTime()
-                if (remaining <= 0 || !done.await(remaining, TimeUnit.NANOSECONDS)) break
+                if (remaining <= 0) break
+                while (!done.await(100, TimeUnit.MILLISECONDS) && System.nanoTime() < deadline) {
+                    connection?.checkActive()
+                }
+                connection?.checkActive()
+                if (System.nanoTime() >= deadline) break
                 val info = resolved.get() ?: continue
                 val advertisedIdentity = info.attributes["gateway"]?.decodeToString() ?: continue
                 if (!advertisedIdentity.matches(Regex("(?i)[0-9a-f]{2}(:[0-9a-f]{2}){5}"))) continue
@@ -123,6 +140,7 @@ object RemoteGatewayDiscovery {
     private fun discoverOverBroadcast(
         identity: String?,
         log: (String) -> Unit,
+        connection: RemoteGatewayConnection?,
     ): Endpoint? {
         val targets = runCatching {
             NetworkInterface.getNetworkInterfaces().toList()
@@ -145,34 +163,41 @@ object RemoteGatewayDiscovery {
         log("Gateway broadcast discovery started interfaces=${targets.size}")
         val query = RemoteRfcommProtocol.discoveryRequest(identity ?: "*")
         for ((localAddress, broadcastAddress) in targets) {
+            connection?.checkActive()
             try {
                 openDiscoverySocket(localAddress, log).use { socket ->
-                    socket.soTimeout = 500
-                    socket.send(DatagramPacket(query, query.size, broadcastAddress,
-                        RemoteRfcommProtocol.DISCOVERY_PORT))
-                    val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(700)
-                    val buffer = ByteArray(256)
-                    while (System.nanoTime() < deadline) {
-                        socket.soTimeout = ((deadline - System.nanoTime()) / 1_000_000L)
-                            .toInt().coerceIn(1, 500)
-                        val packet = DatagramPacket(buffer, buffer.size)
-                        try {
-                            socket.receive(packet)
-                        } catch (_: java.net.SocketTimeoutException) {
-                            continue
+                    connection?.track(socket)
+                    try {
+                        socket.soTimeout = 500
+                        socket.send(DatagramPacket(query, query.size, broadcastAddress,
+                            RemoteRfcommProtocol.DISCOVERY_PORT))
+                        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(700)
+                        val buffer = ByteArray(256)
+                        while (System.nanoTime() < deadline) {
+                            socket.soTimeout = ((deadline - System.nanoTime()) / 1_000_000L)
+                                .toInt().coerceIn(1, 500)
+                            val packet = DatagramPacket(buffer, buffer.size)
+                            try {
+                                socket.receive(packet)
+                            } catch (_: java.net.SocketTimeoutException) {
+                                continue
+                            }
+                            val response = RemoteRfcommProtocol.parseDiscoveryResponse(packet.data, packet.length)
+                                ?: continue
+                            if (identity != null && !response.gatewayBluetoothMac.equals(identity, ignoreCase = true)) {
+                                continue
+                            }
+                            val host = packet.address.hostAddress ?: continue
+                            log("Gateway discovered address=$host port=${response.tcpPort} source=udp-broadcast interface=${localAddress.hostAddress} localPort=${socket.localPort}")
+                            return Endpoint(response.gatewayBluetoothMac, host, response.tcpPort, "udp-broadcast",
+                                discoveryLocalPort = socket.localPort)
                         }
-                        val response = RemoteRfcommProtocol.parseDiscoveryResponse(packet.data, packet.length)
-                            ?: continue
-                        if (identity != null && !response.gatewayBluetoothMac.equals(identity, ignoreCase = true)) {
-                            continue
-                        }
-                        val host = packet.address.hostAddress ?: continue
-                        log("Gateway discovered address=$host port=${response.tcpPort} source=udp-broadcast interface=${localAddress.hostAddress} localPort=${socket.localPort}")
-                        return Endpoint(response.gatewayBluetoothMac, host, response.tcpPort, "udp-broadcast",
-                            discoveryLocalPort = socket.localPort)
+                    } finally {
+                        connection?.release(socket)
                     }
                 }
             } catch (error: Exception) {
+                connection?.checkActive()
                 log("Gateway broadcast discovery interface=${localAddress.hostAddress} failed error=${error.javaClass.simpleName}")
             }
         }

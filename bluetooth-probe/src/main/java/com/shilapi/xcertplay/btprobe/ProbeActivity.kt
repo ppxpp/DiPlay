@@ -120,6 +120,9 @@ class ProbeActivity : Activity() {
         button(left, "读取音源 / 音频通道清单") { runTest {
             AudioChannelProbe(this, ::record, cancelled).inventory()
         } }
+        button(left, "USB 蓝牙模块测试页（OTG · HCI）") {
+            startActivity(Intent(this, UsbBtProbeActivity::class.java))
+        }
         button(left, "检查步骤 5–6 的前置条件") { runTest {
             stage(4, "静态解码已定位字节通道链路（77 注册 → 65 请求 SPP → 87 承载数据）；未实测前不定论")
             stage(5, "待验证：无线授权由 iPhone 侧驱动 iAP2 流程；本探针不伪造授权或凭据")

@@ -30,6 +30,8 @@ class LauncherIntentTest {
         app.getSharedPreferences("diplay", 0).edit().clear().commit()
         app.getSharedPreferences("xcertplay_airplay", 0).edit().clear().commit()
         CarPlayBackgroundSession.clear()
+        // These tests exercise launcher routing, not the startup consent gate.
+        Disclaimer.accept(app)
         val stop: ((() -> Unit) -> Unit) = { done -> stops++; done() }
         ReflectionHelpers.setField(CarPlayBackgroundSession, "stopAction", stop)
     }

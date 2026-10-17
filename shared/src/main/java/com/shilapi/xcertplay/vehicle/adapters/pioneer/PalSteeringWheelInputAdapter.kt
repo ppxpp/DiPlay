@@ -21,6 +21,7 @@ internal object PalSteeringWheelInputAdapter : SteeringWheelInputSource {
     private var keyCallback: Any? = null
     private var lastEvent: String? = null
     private var lastAt = 0L
+    private val recentEvents = LinkedHashMap<String, Long>()
 
     fun configure(context: Context) { appContext = context.applicationContext }
 
@@ -143,12 +144,19 @@ internal object PalSteeringWheelInputAdapter : SteeringWheelInputSource {
             val command = when (key) { 8 -> MediaCommand.PREVIOUS; 9 -> MediaCommand.NEXT; else -> return }
             val signature = "$key:${type.getMethod("getSource").invoke(event)}:" +
                 "${type.getMethod("getDownTime").invoke(event)}:${type.getMethod("getEventTime").invoke(event)}"
-            val now = SystemClock.elapsedRealtime()
-            if (signature == lastEvent && now - lastAt < 250) return
-            lastEvent = signature
-            lastAt = now
-            target(command)
+            if (acceptBridgeEvent(signature)) target(command)
         }.onFailure { report("Vehicle: PAL event rejected ${it.javaClass.simpleName}") }
+    }
+
+    /** Deduplicate one physical event delivered directly and through WeCarFlow's bridge. */
+    @Synchronized
+    internal fun acceptBridgeEvent(signature: String): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        recentEvents.entries.removeAll { now - it.value > 2_000 }
+        if (recentEvents.containsKey(signature)) return false
+        if (recentEvents.size >= 64) recentEvents.remove(recentEvents.keys.first())
+        recentEvents[signature] = now
+        return true
     }
 
     private fun proxy(loader: ClassLoader, type: Class<*>, label: String,

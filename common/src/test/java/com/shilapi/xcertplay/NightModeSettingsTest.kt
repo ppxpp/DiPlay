@@ -193,6 +193,7 @@ class NightModeSettingsTest {
         CarPlayNightMode.DAY -> R.string.carplay_night_day
         CarPlayNightMode.NIGHT -> R.string.carplay_night_night
         CarPlayNightMode.SCHEDULE -> R.string.carplay_night_schedule
+        CarPlayNightMode.CAMRY -> R.string.carplay_night_camry
     }
 
     private fun appearanceSummary(mode: CarPlayNightMode) =

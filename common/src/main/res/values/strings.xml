@@ -983,4 +983,22 @@
     <string name="black_corner_overlay_off">Off</string>
     <string name="black_corner_overlay_value">%1$d dp</string>
     <string name="iphone_corner_mask_mode">iPhone mask (experimental)</string>
+    <!-- Startup disclaimer gate -->
+    <string name="disclaimer_title">Before you use DiPlay</string>
+    <string name="disclaimer_subtitle">Please read this before continuing. It explains how you may use the app.</string>
+    <string name="disclaimer_page1_title">For learning only</string>
+    <string name="disclaimer_page1_l1">DiPlay is <b>experimental software</b> for learning and researching CarPlay on <b>your own device</b>. It is not mature.</string>
+    <string name="disclaimer_page1_l2">You use it at your own risk, and <b>you are responsible for the consequences</b>.</string>
+    <string name="disclaimer_page2_title">No warranty of safety or stability</string>
+    <string name="disclaimer_page2_l1">The software is provided <b>as-is</b>. We <b>do not guarantee</b> that it is safe, stable, error-free, or uninterrupted.</string>
+    <string name="disclaimer_page2_l2">It may contain defects or security flaws. We provide <b>no warranty and no technical support</b>.</string>
+    <string name="disclaimer_page2_l3">Do not rely on DiPlay for anything that affects safety.</string>
+    <string name="disclaimer_page3_title">Not for real-world use</string>
+    <string name="disclaimer_page3_l1">Use it only for <b>personal testing while parked</b>.</string>
+    <string name="disclaimer_page3_warn">Never use it while driving.</string>
+    <string name="disclaimer_page3_l2">Do not use it in a <b>commercial product</b>, or distribute or deploy it for others.</string>
+    <string name="disclaimer_page3_l3">Follow your local traffic and wireless regulations; modifying your head unit <b>may void the vehicle warranty</b>.</string>
+    <string name="disclaimer_checkbox">Don\'t show this again (it returns after an update)</string>
+    <string name="disclaimer_agree">Agree and continue</string>
+    <string name="disclaimer_disagree">Disagree and exit</string>
 </resources>

@@ -62,3 +62,8 @@ android {
 androidComponents.onVariants { variant ->
     variant.sources.kotlin!!.addGeneratedSourceDirectory(prepareIap2ProbeSources) { it.outputDirectory }
 }
+
+dependencies {
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.core.ktx)
+}

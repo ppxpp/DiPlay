@@ -1,3 +1,7 @@
+> **Legacy：旧 QQMusic 基线适配，停止维护。** 本目录针对 `com.tencent.qqmusic` 原始类结构；
+> 当前实际维护的 `com.tencent.wecarflow` 2.7.1 适配位于DiPlay 仓库根目录 `wecarflow/`。
+> 两者目标基线不同，不可混用脚本或直接覆盖。以下保留历史协议和验证记录，不代表当前车机部署状态。
+
 # QQ 本机播放保护补丁
 
 维护入口属于 DiPlay；目标为已解包的 `com.tencent.wecarflow` QQ 音乐。脚本不重打、签名或安装 QQ APK，不更改 PAL 接入 runtime；通过精确幂等补丁扩展既有仪表 ClusterMediaBridge/UpdateWidgetService。

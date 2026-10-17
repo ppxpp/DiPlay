@@ -408,6 +408,8 @@ class CarPlayHostActivity : ComponentActivity() {
     private var gestureOverlay: View? = null
     private var settingsMenu: View? = null
     private var settingsMenuCategoryKey = "connection"
+    private var settingsMenuRenderedState: List<Any?>? = null
+    private var settingsMenuNeedsRebuild = false
     private var settingsMenuContentScroll: ScrollView? = null
     private var mfiTargetGroup: RadioGroup? = null
     private var mfiI2cFields: View? = null
@@ -745,6 +747,21 @@ class CarPlayHostActivity : ComponentActivity() {
         override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
     }
 
+    private var pioneerPausedSurface: Surface? = null
+    private val pioneerSurfaceRetirement = PioneerSurfaceRetirement()
+
+    private fun pioneerSurfaceToRetire(): Surface? =
+        if (!wirelessEnabled && com.shilapi.xcertplay.pioneer.PioneerUsbPolicy.matchesDevice() && fallbackVideoView != null)
+            currentSurface?.takeIf { it.isValid }
+        else null
+
+    private fun preparePioneerSurfaceRetirement(surface: Surface) {
+        val startedNanos = System.nanoTime()
+        if (pioneerPausedSurface !== surface) captureLastPicture()
+        pioneerPausedSurface = surface
+        pioneerSurfaceRetirement.begin(surface, (listOfNotNull(sink) + retiringSinks).distinct(), startedNanos)
+    }
+
     private val fallbackSurfaceCallback = object : SurfaceHolder.Callback {
         override fun surfaceCreated(holder: SurfaceHolder) {
             if (isDestroyed || holder !== fallbackVideoView?.holder) return
@@ -770,17 +787,22 @@ class CarPlayHostActivity : ComponentActivity() {
 
         override fun surfaceDestroyed(holder: SurfaceHolder) {
             val surface = holder.surface
-            captureLastPicture()
+            val detachStarted = System.nanoTime()
+            if (pioneerPausedSurface !== surface) captureLastPicture()
             // The SurfaceHolder contract: nothing may render to the surface once this returns. Every decoder
             // is asked at once, then waited for against one deadline; each confirms once it has moved,
             // parked or released its codec, and closing decoders count once their workers exit. With
             // smooth video the live session's main decoder parks off screen and keeps its state.
             val live = sink
+            val deadline = detachStarted + 2_000_000_000L
+            val graceDeadline = deadline + 500_000_000L
             val detaches = (listOfNotNull(live) + retiringSinks).distinct()
-                .map { owner -> owner.beginSurfaceDetach(surface, parkMain = smoothVideo && owner === live) }
+                .map { owner -> owner.beginSurfaceDetach(surface, parkMain = smoothVideo && owner === live,
+                    deadlineNanos = deadline, graceDeadlineNanos = graceDeadline) }
             val confirmed = detaches.map { it.await() }.all { it }
             videoSurfaceOwner.clear(surface)
-            appendLog("SurfaceView video surface destroyed detachConfirmed=$confirmed")
+            appendLog("SurfaceView video surface destroyed detachConfirmed=$confirmed " +
+                "elapsedMs=${(System.nanoTime() - detachStarted) / 1_000_000L}")
         }
     }
 
@@ -827,8 +849,13 @@ class CarPlayHostActivity : ComponentActivity() {
                 .put("progressOutcome", controller?.connectionProgress?.snapshot()?.outcome?.name)
                 .put("videoRendered", sink?.liveVideoCounters()?.rendered)
                 .put("videoReceived", sink?.liveVideoCounters()?.received)
+                .put("settingsMenuOpen", menuOpen).put("hostWindowFocused", hasWindowFocus())
+                .put("carPlayNightMode", carPlayNightMode.key).put("carPlayNight", darkMode)
+                .put("vehicleNight", com.shilapi.xcertplay.pioneer.CamryDayNight.latestNight)
+                .put("microphoneProbe", com.shilapi.xcertplay.media.MicrophoneProbe.snapshot())
                 .put("diagnosticLogDropped", AsyncDiagnosticLog.droppedCount)
         }, retryVpn = { requestStartupPrerequisites() }, videoGesture = ::startDebugVideoGesture, videoTap = ::debugVideoTap,
+            hostUi = ::debugHostUi,
             videoSnapshot = {
                 check(!debugGestureRunning) { "Wait for timed gesture to complete before capturing" }
                 CarPlaySurfaceSnapshot.capture(currentSurface, videoView?.width ?: 1280, videoView?.height ?: 720)
@@ -1143,6 +1170,11 @@ class CarPlayHostActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         WheelKeyService.restoreIfNeeded(this)
+        if (pioneerPausedSurface != null) {
+            pioneerPausedSurface = null
+            currentSurface?.takeIf { it.isValid }?.let(::attachSurface)
+            sink?.refreshPicture(SCREEN_TYPE_MAIN)
+        }
         hostAppearanceResumed = true
         updateCallPopupGuard()
         val savedNightMode = AirPlayPersistence.loadCarPlayNightMode(this)
@@ -1764,7 +1796,21 @@ class CarPlayHostActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
     }
 
+    override fun onUserLeaveHint() {
+        pioneerSurfaceToRetire()?.let(::preparePioneerSurfaceRetirement)
+        super.onUserLeaveHint()
+    }
+
     override fun onPause() {
+        // This firmware may abandon its Surface before surfaceDestroyed. Start early when possible,
+        // and keep one short absolute deadline for every live/retiring sink, including exit grace.
+        pioneerSurfaceToRetire()?.let { surface ->
+            val started = System.nanoTime()
+            preparePioneerSurfaceRetirement(surface)
+            val confirmed = pioneerSurfaceRetirement.await(surface, (listOfNotNull(sink) + retiringSinks).distinct())
+            appendLog("PIONEER_PAUSE_DETACH confirmed=$confirmed " +
+                "elapsedMs=${(System.nanoTime() - started) / 1_000_000L}")
+        }
         cancelTemporarySystemBars()
         hostAppearanceResumed = false
         updateCallPopupGuard()
@@ -3271,6 +3317,7 @@ class CarPlayHostActivity : ComponentActivity() {
             }
             scroll.scrollTo(0, 0)
             chips.requestLayout()
+            settingsMenuRenderedState = settingsMenuRenderState()
         }
         fun categoryButton(key: String, title: Int) = DiPlayButton(this).apply {
             text = getString(title)
@@ -3408,6 +3455,8 @@ class CarPlayHostActivity : ComponentActivity() {
         this.hotspotStatusView = hotspotStatusView
         updateHotspotStatusBlock()
         updateResolutionMenu()
+        settingsMenuRenderedState = settingsMenuRenderState()
+        settingsMenuNeedsRebuild = false
         return overlay
     }
 
@@ -3450,9 +3499,15 @@ class CarPlayHostActivity : ComponentActivity() {
         AirPlayPersistence.saveBlackCornerRadiusDp(this, blackCornerRadiusDp)
     }
 
+    // Rendering also depends on session state that must not trigger a discard-edits dialog.
+    private fun settingsMenuRenderState(): List<Any?> = listOf(
+        menuSettingsSignature(), settingsMenuCategoryKey, sidePanelShown,
+        sessionDisplay?.viewAreas?.sidePanel() != null,
+    )
+
     /** Mirrors [persistMenuSettings]: a field staged there belongs here too. */
     private fun menuSettingsSignature(): Int = listOf(
-        gestureFingerCount, wirelessEnabled, mfiTarget, mfiI2cPath, remoteMfiServer, remoteMfiToken,
+        hideBydCallPopup, gestureFingerCount, wirelessEnabled, mfiTarget, mfiI2cPath, remoteMfiServer, remoteMfiToken,
         wirelessHotspotMode, existingWifiSsid, existingWifiPassphrase, manualHotspotSsid,
         manualHotspotPassphrase, manualHotspotBand, manualHotspotChannel, manualHotspotSecurity,
         locationReportingEnabled, autoStartOnBoot, advancedAudioChannelMapping, displayScaleTenths,
@@ -5018,20 +5073,31 @@ class CarPlayHostActivity : ComponentActivity() {
         // Shown in CarPlay's app list as the "back to the car" button.
         resources.openRawResource(R.raw.ic_car_home).use { it.readBytes() }
 
+    private var cachedIconPreviewBitmap: Bitmap? = null
+    private var cachedIconPreviewBytes: ByteArray? = null
+    private var cachedIconPreviewDensity = 0
+    private var cachedIconPreviewIsCustom = false
+
     private fun updateAirPlayIconPreview() {
         val preview = iconPreviewView ?: return
         val custom = AirPlayPersistence.loadCustomAirPlayIconFile(this)
-        var customBitmap: Bitmap? = null
-        if (custom != null) {
-            customBitmap = BitmapFactory.decodeFile(custom.absolutePath)
-            if (customBitmap == null) {
-                AirPlayPersistence.clearCustomAirPlayIcon(this)
-            }
+        val encoded = runCatching { custom?.readBytes() }.getOrNull()
+        val sameBytes = if (encoded == null) cachedIconPreviewBytes == null
+            else cachedIconPreviewBytes?.contentEquals(encoded) == true
+        val density = resources.displayMetrics.densityDpi
+        var bitmap = cachedIconPreviewBitmap
+        if (bitmap == null || density != cachedIconPreviewDensity || !sameBytes) {
+            val customBitmap = encoded?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+            if (custom != null && customBitmap == null) AirPlayPersistence.clearCustomAirPlayIcon(this)
+            bitmap = customBitmap ?: BitmapFactory.decodeResource(resources, R.raw.placeholder_icon)
+            cachedIconPreviewBitmap = bitmap
+            cachedIconPreviewBytes = if (customBitmap == null) null else encoded
+            cachedIconPreviewDensity = density
+            cachedIconPreviewIsCustom = customBitmap != null
         }
-        val bitmap = customBitmap ?: BitmapFactory.decodeResource(resources, R.raw.placeholder_icon)
         preview.setImageBitmap(bitmap)
-        iconStatusView?.text =
-            if (customBitmap != null) getString(R.string.custom_1_1_icon) else getString(R.string.default_placeholder_icon)
+        iconStatusView?.text = if (cachedIconPreviewIsCustom) getString(R.string.custom_1_1_icon)
+            else getString(R.string.default_placeholder_icon)
     }
 
     private fun currentActivitySize(): DisplaySize? {
@@ -5475,6 +5541,10 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     private fun startCarPlay(size: DisplaySize) {
+        if (com.shilapi.xcertplay.pioneer.PioneerDebugUpdateGuard.isBusy()) {
+            appendLog("CarPlay start deferred: APK update in progress")
+            return
+        }
         if (CarPlayBackgroundSession.hasSession() && !CarPlayBackgroundSession.isOwner(this)) return
         if (shuttingDown.get() || menuOpen || handshakeResetInProgress || controller != null) return
         val controllerGeneration = restartGeneration
@@ -6056,26 +6126,42 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun openSettingsMenu() {
         cancelTemporarySystemBars()
         if (menuOpen) return
+        val openingStarted = System.nanoTime()
         controller?.sendTouch(emptyList())
         loadPersistedSettings()
+        val loadedAt = System.nanoTime()
         settingsBaseline = captureSettingsBaseline()
+        val baselineAt = System.nanoTime()
         menuSettingsSignature = menuSettingsSignature()
-        // Rebuild controls from saved values so a cancelled edit cannot reappear on reopening.
-        settingsMenu?.let { previous ->
+        // Reuse the prepared controls until settings changed. Cancelled edits explicitly invalidate
+        // them before restoring fields, so stale slider/text values cannot reappear.
+        val rebuild = settingsMenuNeedsRebuild || settingsMenuRenderedState != settingsMenuRenderState()
+        settingsMenu?.takeIf { rebuild }?.let { previous ->
             val parent = previous.parent as ViewGroup
             val index = parent.indexOfChild(previous)
             parent.removeView(previous)
             settingsMenu = buildSettingsMenu()
             parent.addView(settingsMenu, index, FrameLayout.LayoutParams(-1, -1))
         }
+        val builtAt = System.nanoTime()
         menuOpen = true
         updateCallPopupGuard()
         gestureOverlay?.visibility = View.GONE
         settingsMenu?.visibility = View.VISIBLE
         safeAreaEditor?.visibility = View.GONE
+        syncMfiSettingsControls()
+        updateManualHotspotFields()
+        val iconStartedAt = System.nanoTime()
+        updateAirPlayIconPreview()
+        val iconEndedAt = System.nanoTime()
+        updateHotspotStatusBlock()
         updateSafeAreaSummary()
         updateResolutionMenu()
         updateDebugOverlays()
+        appendLog("UI_SETTINGS_OPEN totalMs=${(System.nanoTime() - openingStarted) / 1_000_000L} " +
+            "loadMs=${(loadedAt - openingStarted) / 1_000_000L} baselineMs=${(baselineAt - loadedAt) / 1_000_000L} " +
+            "buildMs=${(builtAt - baselineAt) / 1_000_000L} rebuilt=$rebuild " +
+            "iconMs=${(iconEndedAt - iconStartedAt) / 1_000_000L}")
     }
 
     private fun openPicturePanel() {
@@ -6119,6 +6205,9 @@ class CarPlayHostActivity : ComponentActivity() {
 
     private fun cancelSettingsEdits() {
         if (!menuOpen) return
+        if (menuSettingsSignature?.let { it != menuSettingsSignature() } == true) {
+            settingsMenuNeedsRebuild = true
+        }
         restoreSettingsBaseline()
         finishSettingsMenu("Settings changes discarded", reconnect = false)
     }
@@ -6385,6 +6474,47 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     @Volatile private var debugGestureRunning = false
+
+    /** App-local diagnostics; no arbitrary intents, system input or preference edits. */
+    private fun debugHostUi(action: String): org.json.JSONObject {
+        check(!debugGestureRunning) { "Wait for timed gesture to finish" }
+        val started = System.nanoTime()
+        val result = when (action) {
+            "AUDIO_TAKE", "AUDIO_RELEASE" -> {
+                check(com.shilapi.xcertplay.pioneer.PioneerUsbPolicy.matchesDevice())
+                val session = checkNotNull(activeAirPlaySession) { "No active CarPlay session" }
+                airPlayCommandExecutor.execute {
+                    val sent = session.sendCommand(mapOf("type" to "changeModes", "params" to mapOf(
+                        "reasonStr" to "Native audio source diagnostic",
+                        "resources" to listOf(mapOf("resourceID" to 2,
+                            "transferType" to if (action == "AUDIO_TAKE") 1 else 2,
+                            "transferPriority" to 500, "takeConstraint" to 100,
+                            "borrowConstraint" to 100, "unborrowConstraint" to 100)))))
+                    appendLog("AUDIO_RESOURCE_PROBE action=$action commandWritten=$sent")
+                }
+                true
+            }
+            "MIC_PROBE_AUTO", "MIC_PROBE_MIC", "MIC_PROBE_VOICE_RECOGNITION", "MIC_PROBE_VOICE_COMMUNICATION", "MIC_PROBE_BUILTIN_MIC", "MIC_PROBE_MIC_16K", "MIC_PROBE_MIC_16K_NORMAL", "MIC_PROBE_VOICE_COMMUNICATION_16K", "MIC_PROBE_VOICE_BUILTIN", "MIC_PROBE_PIONEER_MIC_16K", "MIC_PROBE_PIONEER_MIC_16K_NORMAL", "MIC_PROBE_CALL_PIPELINE" -> {
+                checkNotNull(sink) { "Media sink unavailable" }.startMicrophoneProbe(this, action.removePrefix("MIC_PROBE_"))
+                true
+            }
+            "SETTINGS_OPEN" -> { openSettingsMenu(); true }
+            "SETTINGS_CLOSE" -> { leaveSettingsMenu(); !menuOpen }
+            "BACKGROUND" -> moveTaskToBack(true)
+            "FOREGROUND" -> {
+                val task = getSystemService(android.app.ActivityManager::class.java).appTasks
+                    .firstOrNull { it.taskInfo?.id == taskId }
+                if (task != null) { task.moveToFront(); true }
+                else OwnScreenStart.start(this,
+                    Intent(this, CarPlayHostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), ::appendLog)
+            }
+            else -> error("Unsupported host UI action")
+        }
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000L
+        appendLog("TCP_HOST_UI action=$action success=$result elapsedMs=$elapsedMs menuOpen=$menuOpen")
+        return org.json.JSONObject().put("action", action).put("success", result)
+            .put("elapsedMs", elapsedMs).put("settingsMenuOpen", menuOpen)
+    }
 
     /** Authenticated TCP probe confined to the current CarPlay surface. */
     private fun debugVideoTap(request: org.json.JSONObject): org.json.JSONObject {

@@ -6,6 +6,8 @@
 
 > **BYD support scope:** These projects focus on BYD cars. They may work on other brands, but other brands are unsupported and there are no plans to add support or fix brand-specific incompatibilities.
 
+> **Disclaimer:** DiPlay is not affiliated with, endorsed by, or authorized by Apple and is not an MFi-certified product. The software is provided **as-is** with no warranty (GPL-3.0). Driving-safety, regulatory, privacy and intellectual-property risks from use are your own responsibility — read [DISCLAIMER.md](DISCLAIMER.md) before installing or distributing.
+
 [Download & website](https://shihabal3amri.github.io/DiPlay/) · [Release](https://github.com/shihabal3amri/DiPlay/releases/tag/v0.2.20) · [Report a problem](https://github.com/shihabal3amri/DiPlay/issues/new/choose)
 
 ![DiPlay home](site/assets/home.png)

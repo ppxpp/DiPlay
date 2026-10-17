@@ -62,6 +62,8 @@ internal class AudioFocusCoordinator(
     private var mediaVolume = FULL_VOLUME
     private var closed = false
     private var focusGeneration = 0L
+    private var recoveryOnly = false
+    private var recoveryEpoch = 0L
     private var currentListener = listenerFor(focusGeneration)
     internal val listener: AudioManager.OnAudioFocusChangeListener get() = currentListener
 
@@ -119,15 +121,54 @@ internal class AudioFocusCoordinator(
             audioRouting.selectMediaSource(report)
         }
         active[track] = Entry(channel, attributes)
+        recoveryOnly = false
+        recoveryEpoch++
         refreshRequest()
         applyMediaVolume(track, active.getValue(track))
-        if (channel == AudioChannel.MEDIA && focusStream != null) {
-            Handler(Looper.getMainLooper()).postDelayed({
-                synchronized(this) {
-                    if (!closed && active.containsKey(track)) audioRouting.pauseLocalPlayer(appContext, report)
-                }
-            }, 500)
+        // The isolated playback guard pauses only already registered player peers. Never send
+        // ACTION_MEDIA_BUTTON here: Android cold-starts the original music Application for it.
+    }
+
+    /** Retry only on an externally confirmed source return; never selects a native source. */
+    @Synchronized
+    fun recoverVehicleMedia(): Boolean {
+        if (closed || manager == null || !audioRouting.available || independentSpeechTracks.isNotEmpty() ||
+            active.values.any { it.channel == AudioChannel.PHONE || it.channel == AudioChannel.ASSISTANT }) return false
+        val attributes = active.values.firstOrNull { it.channel == AudioChannel.MEDIA }?.attributes
+            ?: AudioAttributes.Builder().setLegacyStreamType(audioRouting.streamType(AudioChannel.MEDIA) ?: return false).build()
+        val stream = audioRouting.focusStream(attributes) ?: return false
+        if (request == null) {
+            focusGeneration++
+            currentListener = listenerFor(focusGeneration)
+            request = AudioFocusRequestCompat(AudioManager.AUDIOFOCUS_GAIN, attributes, currentListener,
+                Handler(Looper.getMainLooper()), stream)
+            requestedChannel = AudioChannel.MEDIA
         }
+        val result = request!!.request(manager)
+        if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) setMediaVolume(FULL_VOLUME)
+        if (active.isEmpty()) {
+            recoveryOnly = true
+            val epoch = ++recoveryEpoch
+            Handler(Looper.getMainLooper()).postDelayed({
+                synchronized(this) { if (recoveryEpoch == epoch) cancelVehicleRecovery() }
+            }, 3000L)
+        }
+        report("Audio: source return focus granted=$result activeTracks=${active.size} streamType=$stream")
+        return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+    }
+
+    /** Only a temporary no-track request is ours to cancel; active renderer focus is untouched. */
+    @Synchronized
+    fun cancelVehicleRecovery() {
+        if (!recoveryOnly) return
+        recoveryOnly = false
+        recoveryEpoch++
+        if (active.isNotEmpty()) return
+        val previous = request
+        request = null
+        requestedChannel = null
+        focusGeneration++
+        manager?.let { previous?.abandon(it) }
     }
 
     @Synchronized
@@ -273,6 +314,15 @@ class AndroidMediaSink(
         onAudioDiagnostic,
     )
 
+    fun hasMediaAudio(): Boolean = synchronized(mediaAudioTypes) { mediaAudioTypes.isNotEmpty() }
+
+    fun canRecoverVehicleMedia(): Boolean = microphoneUplinks.isEmpty() &&
+        audioRenderers.keys.none { it.audioType in setOf("telephony", "speechRecognition", "alert") }
+
+    fun recoverVehicleMediaFocus(): Boolean = canRecoverVehicleMedia() && audioFocusCoordinator.recoverVehicleMedia()
+
+    fun cancelVehicleMediaRecovery() = audioFocusCoordinator.cancelVehicleRecovery()
+
     /** The media-key session may own Android's current focus request for this same sink. */
     fun onMediaAudioFocusChanged(change: Int) {
         audioFocusCoordinator.onExternalFocusChange(change)
@@ -306,6 +356,7 @@ class AndroidMediaSink(
         audioRenderers.values.forEach { it.setNavigationAttenuationDb(navigationAttenuationDb) }
     }
     private val microphoneUplinks = ConcurrentHashMap<AudioStreamId, MicrophoneUplink>()
+    private var microphoneClosed = false // guarded by this
     private val audioModeLock = Any()
     private var communicationModeStream: AudioStreamId? = null
     private var savedAudioMode = AudioManager.MODE_NORMAL
@@ -363,10 +414,17 @@ class AndroidMediaSink(
      * surface change queued before this: one already elsewhere has nothing to do. With [parkMain] the
      * main-screen decoder moves to an offscreen consumer it owns and keeps its state (smooth video, so the
      * picture can return at once); other decoders are released. Decoders closed earlier whose workers have
-     * not exited yet are waited for too. [SurfaceDetach.await] returns the result.
+     * not exited yet are waited for too. [SurfaceDetach.await] returns the result. Hosts retiring several
+     * sinks may share absolute [deadlineNanos] and [graceDeadlineNanos] so waiting never multiplies
+     * the timeout by the number of sinks. The defaults preserve the normal holder-release barrier.
      */
-    fun beginSurfaceDetach(surface: Surface, parkMain: Boolean): SurfaceDetach {
-        val deadline = System.nanoTime() + detachTimeoutNanos
+    fun beginSurfaceDetach(
+        surface: Surface,
+        parkMain: Boolean,
+        deadlineNanos: Long = System.nanoTime() + detachTimeoutNanos,
+        graceDeadlineNanos: Long = deadlineNanos + detachGraceNanos,
+    ): SurfaceDetach {
+        val deadline = deadlineNanos
         val requests = ArrayList<SurfaceDetachRequest>()
         val steps = ArrayList<() -> Boolean>()
         synchronized(videoOwnershipLock) {
@@ -375,10 +433,10 @@ class AndroidMediaSink(
             for ((type, decoder) in videoDecoders.entries.toList()) {
                 val request = decoder.requestDetach(surface, park = parkMain && type == MAIN_SCREEN_TYPE)
                 requests += request
-                steps += { settleDetach(type, decoder, request, deadline) }
+                steps += { settleDetach(type, decoder, request, deadline, graceDeadlineNanos) }
             }
             closingVideoDecoders.removeIf { it.exited }
-            closingVideoDecoders.toList().forEach { closing -> steps += { closing.awaitExitUntil(deadline + detachGraceNanos) } }
+            closingVideoDecoders.toList().forEach { closing -> steps += { closing.awaitExitUntil(graceDeadlineNanos) } }
         }
         return SurfaceDetach(requests, steps)
     }
@@ -396,13 +454,19 @@ class AndroidMediaSink(
         fun await(): Boolean = steps.map { it() }.all { it }
     }
 
-    private fun settleDetach(type: Int, decoder: VideoDecoder, request: SurfaceDetachRequest, deadline: Long): Boolean {
+    private fun settleDetach(
+        type: Int,
+        decoder: VideoDecoder,
+        request: SurfaceDetachRequest,
+        deadline: Long,
+        graceDeadline: Long,
+    ): Boolean {
         if (decoder.awaitDetach(request, deadline)) return true
         Log.w("xcertplay-usb", "Video detach not confirmed in time type=$type; closing that decoder")
         videoDiagnosticHandlers[type]?.invoke("surface detach not confirmed; decoder closed")
         // The stream's next frame starts a fresh decoder on no surface, so it cannot compete for this one.
         retire(type, decoder)
-        return decoder.awaitExitUntil(deadline + detachGraceNanos)
+        return decoder.awaitExitUntil(graceDeadline)
     }
 
     /** Closes a stream's decoder and keeps it visible to surface detaches until its worker exits. */
@@ -574,14 +638,18 @@ class AndroidMediaSink(
         if (before != after) onMediaAudioChanged(after)
     }
 
+    @Synchronized
     override fun onMicrophoneStarted(id: AudioStreamId, config: MicrophoneConfig) {
+        if (microphoneClosed) return
         // This callback runs on the downlink thread; microphone failures must not stop playback.
         try {
+            MicrophoneProbe.stop()
             val speakerphoneCall = config.audioType == "telephony" &&
                 appContext != null && BydBluetoothSuspend.isSuspendedByUs(appContext)
             if (config.audioType == "telephony" && !speakerphoneCall) enterCommunicationMode(id)
             val uplink = microphoneUplinks.computeIfAbsent(id) {
                 MicrophoneUplink(config, onAudioDiagnostic,
+                    applicationPackage = appContext?.packageName,
                     speakerphoneCall = speakerphoneCall,
                     echoReference = if (config.audioType == TELEPHONY_AUDIO_TYPE) callEchoReferences[id] else null)
             }
@@ -596,12 +664,20 @@ class AndroidMediaSink(
         }
     }
 
+    @Synchronized
     override fun onMicrophoneStopped(id: AudioStreamId) {
         try {
             microphoneUplinks.remove(id)?.close()
         } finally {
             restoreAudioMode(id)
         }
+    }
+
+    @Synchronized
+    fun startMicrophoneProbe(context: android.content.Context, choice: String) {
+        check(!microphoneClosed) { "Media sink is closed" }
+        check(microphoneUplinks.isEmpty()) { "Wait until the current call or Siri finishes" }
+        MicrophoneProbe.start(context.applicationContext, choice, onAudioDiagnostic)
     }
 
     private fun enterCommunicationMode(id: AudioStreamId) {
@@ -694,11 +770,15 @@ class AndroidMediaSink(
         callEchoReferences.clear()
         val hadMedia = synchronized(mediaAudioTypes) { mediaAudioTypes.isNotEmpty().also { mediaAudioTypes.clear() } }
         if (hadMedia) onMediaAudioChanged(false)
-        try {
-            microphoneUplinks.values.forEach(MicrophoneUplink::close)
-        } finally {
-            microphoneUplinks.clear()
-            restoreAudioMode(null)
+        synchronized(this) {
+            microphoneClosed = true
+            val probeStopped = runCatching { MicrophoneProbe.stop(); true }.getOrDefault(false)
+            try {
+                microphoneUplinks.values.forEach(MicrophoneUplink::close)
+            } finally {
+                microphoneUplinks.clear()
+                if (probeStopped) restoreAudioMode(null)
+            }
         }
     }
 
@@ -1091,10 +1171,8 @@ private class VideoDecoder(
         try {
             while (running) {
                 val job = queue.poll(5)
-                outputFailure?.let { failure ->
-                    outputFailure = null
-                    onJobFailure("output", failure)
-                }
+                // Keep the output gate closed until releaseDecoder retires the failed codec.
+                outputFailure?.let { failure -> onJobFailure("output", failure) }
                 try {
                     when (job) {
                         is VideoJob.Config -> configureDecoder(job)
@@ -1757,6 +1835,7 @@ private class VideoDecoder(
         synchronized(outputLock) {
             codec = decoder
             decoder = null
+            outputFailure = null
             // The output thread returns from dequeueOutputBuffer within its timeout and then sees no codec.
             awaitNotDequeuing(codec)
         }
@@ -2650,7 +2729,7 @@ private class AudioRenderer(
 
     private fun trimClock(track: AudioTrack) {
         if (mappedChannel != AudioChannel.MEDIA) return
-        val enabled = com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.audioClockTrimEnabled
+        val enabled = com.shilapi.xcertplay.pioneer.PioneerPlaybackPolicy.audioClockTrimEnabled
         if (enabled != clockTrimApplied) {
             val result = runCatching { track.setPlaybackRate(format.sampleRate) }.getOrDefault(AudioTrack.ERROR)
             report("Audio: clock trim comparison enabled=$enabled resetResult=$result")
@@ -2757,7 +2836,7 @@ private class AudioRenderer(
             "rxBytes=${receivedBytes.getAndSet(0)} pcmBytes=$pcmBytesThisWindow " +
             "writtenBytes=$writtenBytesThisWindow unwrittenBytes=$unwrittenBytesThisWindow " +
             "writeExits=${writeExitCounts.entries.joinToString(",") { "${it.key}:${it.value}" }.ifEmpty { "none" }} " +
-            "clockTrimEnabled=${com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.audioClockTrimEnabled} " +
+            "clockTrimEnabled=${com.shilapi.xcertplay.pioneer.PioneerPlaybackPolicy.audioClockTrimEnabled} " +
             "actualPlaybackRate=${currentTrack?.playbackRate ?: -1} ended=$force"
         Log.i(STATS_TAG, ioLine)
         runCatching { report(ioLine) }

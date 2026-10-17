@@ -291,6 +291,7 @@ class CarPlayController(
     @Volatile private var wifiScanPause: WifiScanPause? = null
     @Volatile private var bonjour: CarPlayBonjour? = null
     private val wirelessResourceLock = Any()
+    private var remoteGatewayConnection: com.shilapi.xcertplay.transport.RemoteGatewayConnection? = null
     private val wirelessFailureReported = AtomicBoolean(false)
     @Volatile private var instantBluetoothLink: InstantBluetoothLink? = null
     @Volatile private var firstTcpWatchdog: FirstTcpWatchdog? = null
@@ -688,8 +689,27 @@ class CarPlayController(
         }
     }
 
+    private val mediaIntentRevision = java.util.concurrent.atomic.AtomicLong()
+    fun mediaCommandRevision(): Long = mediaIntentRevision.get()
+
+    /** A source-return PLAY is subordinate to subsequent user input and to its original session. */
+    fun recoverMediaPlayback(expectedSession: Any, expectedRevision: Long, allowed: () -> Boolean): Boolean {
+        if (closed || activeSession !== expectedSession) return false
+        val session = activeSession ?: return false
+        return try {
+            touchExecutor.execute {
+                if (runCatching(allowed).getOrDefault(false) && !closed && activeSession === session &&
+                    mediaIntentRevision.get() == expectedRevision && nowPlayingSnapshot().playing) {
+                    session.sendMedia(com.shilapi.xcertplay.airplay.CarPlayMediaButton.PLAY)
+                }
+            }
+            true
+        } catch (_: Exception) { false }
+    }
+
     fun sendMediaButton(index: Int): Boolean {
         if (closed) return false
+        mediaIntentRevision.incrementAndGet()
         val session = activeSession ?: return false
         return try {
             if ((LocalConnectionExperiments.TOUCH_COALESCING || com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.touchCoalescingComparisonEnabled)) pioneerTouchQueue.barrier()
@@ -704,6 +724,7 @@ class CarPlayController(
         synchronized(wirelessResourceLock) {
             if (closed) return
             closed = true
+            remoteGatewayConnection?.close()
             // Order cancellation with address-preference commits and generation replacement.
             wirelessGeneration.incrementAndGet()
             dashboardMapOutputVisible = false
@@ -1268,6 +1289,7 @@ class CarPlayController(
             wirelessTunnelReady.set(false)
             wirelessActiveReported.set(false)
             wirelessHandoffFellBack.set(false)
+            remoteGatewayConnection?.close()
             val next = wirelessGeneration.incrementAndGet()
             onStatus(CarPlayStatus.StartingHotspot, next)
             next
@@ -1278,6 +1300,7 @@ class CarPlayController(
     private fun restartWireless() {
         val generation = synchronized(wirelessResourceLock) {
             firstTcpWatchdog?.terminate()
+            remoteGatewayConnection?.close()
             wirelessGeneration.incrementAndGet()
         }
         Thread(
@@ -1414,12 +1437,31 @@ class CarPlayController(
 
             val remoteGateway = remoteRfcommGateway
             val remoteStream = remoteGateway?.let { gateway ->
+                val connection = com.shilapi.xcertplay.transport.RemoteGatewayConnection()
                 synchronized(wirelessResourceLock) {
                     if (isStaleWirelessRun(generation)) return
-                    com.shilapi.xcertplay.transport.RemoteGatewayDiscovery.connect(appContext, gateway, ::connectionDiagnostic)
-                        .also { bluetoothStream = it }
+                    remoteGatewayConnection?.close()
+                    remoteGatewayConnection = connection
+                }
+                try {
+                    val connected = com.shilapi.xcertplay.transport.RemoteGatewayDiscovery.connect(
+                        appContext, gateway, ::connectionDiagnostic, connection)
+                    synchronized(wirelessResourceLock) {
+                        if (isStaleWirelessRun(generation) || remoteGatewayConnection !== connection) {
+                            connected.close()
+                            return
+                        }
+                        bluetoothStream = connected
+                    }
+                    connected
+                } finally {
+                    synchronized(wirelessResourceLock) {
+                        if (remoteGatewayConnection === connection) remoteGatewayConnection = null
+                    }
+                    connection.close()
                 }
             }
+
             val adapter = if (remoteStream == null) {
                 bluetoothAdapter ?: throw BluetoothRadioCheck.failure(BluetoothRadioCheck.NO_ADAPTER)
             } else null
@@ -1937,6 +1979,8 @@ class CarPlayController(
         }
 
     private fun closeBluetoothBootstrapTransport() {
+        remoteGatewayConnection?.close()
+        remoteGatewayConnection = null
         val activeCsm = csm
         csm = null
         if (activeCsm != null) closeBestEffort("wireless CSM") { activeCsm.close() }

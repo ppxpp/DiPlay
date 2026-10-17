@@ -6,6 +6,8 @@
 
 > 这些项目专注于比亚迪汽车。它们可能在其他品牌上运行，但其他品牌不在支持范围内，也没有增加支持或修复其品牌特定兼容性问题的计划。
 
+> **免责声明：** DiPlay 与 Apple 无关联，未获 Apple 授权或认可，也不是 MFi 认证产品。软件按"现状"提供，无任何担保（GPL-3.0）。使用所涉及的行车安全、法规、隐私与知识产权风险由使用者自行承担——安装或分发前请先阅读 [DISCLAIMER.md](DISCLAIMER.md)。
+
 [下载与中文网站](https://shihabal3amri.github.io/DiPlay/zh-Hans/) · [0.2.20 版本](https://github.com/shihabal3amri/DiPlay/releases/tag/v0.2.20) · [完整说明](README.md) · [报告问题](https://github.com/shihabal3amri/DiPlay/issues/new/choose)
 
 ## 0.2.20 — 公开预览版

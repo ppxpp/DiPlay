@@ -19,7 +19,10 @@ def read_exact(stream, count):
 
 
 def request(args, cmd, **fields):
-    header = {"cmd": cmd, "token": args.token, **fields}
+    header = {"cmd": cmd, **fields}
+    # Optional legacy credential for talking to older installed builds.
+    if args.token:
+        header["token"] = args.token
     upload = args.apk if cmd == "update" else None
     if upload:
         header["size"] = Path(upload).stat().st_size
@@ -53,10 +56,18 @@ def main():
     parser = argparse.ArgumentParser(description="DiPlay TCP 调试，车机与本机需在同一局域网")
     parser.add_argument("--host", required=True, help="车机首页显示的 LAN IPv4")
     parser.add_argument("--port", type=int, default=8721, help="以 APP 显示的实际端口为准")
-    parser.add_argument("--token", default=os.environ.get("DIPLAY_DEBUG_TOKEN"), help="首页口令或 DIPLAY_DEBUG_TOKEN 环境变量")
+    parser.add_argument("--token", default=os.environ.get("DIPLAY_DEBUG_TOKEN"), help="仅兼容旧版服务；新版无需口令")
     parser.add_argument("--timeout", type=float, default=45)
     commands = parser.add_subparsers(dest="cmd", required=True)
     commands.add_parser("status")
+    audio_source = commands.add_parser("audio-source", help="读取先锋音源或执行FM/爱趣听切换实验")
+    audio_source.add_argument("--mode", choices=["STATUS", "FM", "WECARFLOW", "OFF", "NEXT", "BT"], default="STATUS")
+    commands.add_parser("update-storage", help="读取更新缓存与可用空间")
+    commands.add_parser("clear-update-cache", help="只清理DiPlay上传的安装临时APK，不清用户数据；先关闭旧安装页")
+    commands.add_parser("companion-status", help="读取WeCarFlow安装版本、保护服务进程与签名")
+    commands.add_parser("restart-app", help="仅已知车机：结束本应用进程并定时重开，验证进程回收恢复")
+    ui = commands.add_parser("host-ui", help="仅已知车机：应用内设置/前后台验证，不修改偏好")
+    ui.add_argument("--action", choices=["AUDIO_TAKE", "AUDIO_RELEASE", "SETTINGS_OPEN", "SETTINGS_CLOSE", "BACKGROUND", "FOREGROUND", "MIC_PROBE_AUTO", "MIC_PROBE_MIC", "MIC_PROBE_VOICE_RECOGNITION", "MIC_PROBE_VOICE_COMMUNICATION", "MIC_PROBE_BUILTIN_MIC", "MIC_PROBE_MIC_16K", "MIC_PROBE_MIC_16K_NORMAL", "MIC_PROBE_VOICE_COMMUNICATION_16K", "MIC_PROBE_VOICE_BUILTIN", "MIC_PROBE_PIONEER_MIC_16K", "MIC_PROBE_PIONEER_MIC_16K_NORMAL", "MIC_PROBE_CALL_PIPELINE"], required=True)
     video = commands.add_parser("video-settings", help="读取或修改视频设置，下次连接生效")
     video.add_argument("--fps", type=int, choices=[30, 60])
     video.add_argument("--resolution-percent", type=int, help="30..160，下次连接生效")
@@ -111,8 +122,6 @@ def main():
     update = commands.add_parser("update")
     update.add_argument("apk")
     args = parser.parse_args()
-    if not args.token:
-        parser.error("请通过 --token 或 DIPLAY_DEBUG_TOKEN 指定首页口令")
     try:
         if args.cmd == "logs":
             offset = args.offset
@@ -128,9 +137,10 @@ def main():
                     break
                 time.sleep(1)
         else:
-            fields = {"mode": args.mode} if args.cmd in ("usb-mode", "usb-configuration", "network-backend", "lwip-diagnostics", "phone-diagnostics", "native-crypto", "video-priority", "touch-coalescing", "async-session-logs", "freescale-reorder", "audio-clock-trim") else {}
+            fields = {"mode": args.mode} if args.cmd in ("audio-source", "usb-mode", "usb-configuration", "network-backend", "lwip-diagnostics", "phone-diagnostics", "native-crypto", "video-priority", "touch-coalescing", "async-session-logs", "freescale-reorder", "audio-clock-trim") else {}
             if args.cmd == "lwip-poll-wait": fields = {"millis": args.millis}
             if args.cmd == "video-gesture": fields = {"kind": args.kind}
+            if args.cmd == "host-ui": fields = {"action": args.action}
             if args.cmd == "video-tap": fields = {"x": args.x, "y": args.y}
             if args.cmd == "toast": fields = {"text": args.text}
             if args.cmd == "usb-tx-batch": fields = {"frames": args.frames}

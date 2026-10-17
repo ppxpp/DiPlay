@@ -20,7 +20,7 @@ class PioneerDebugActivity : Activity() {
     private val refresh = object : Runnable {
         override fun run() {
             status.text = "${PioneerDebugService.addresses().joinToString("\n")}\n端口：${PioneerDebugRuntime.port}（${PioneerDebugRuntime.listenerState}）\n" +
-                "口令：${PioneerDebugRuntime.token(this@PioneerDebugActivity)}\nUSB：${PioneerUsbPolicy.mode(this@PioneerDebugActivity)} / 生效=${PioneerUsbPolicy.enabled(this@PioneerDebugActivity)}\n" +
+                "TCP 调试无需口令\nUSB：${PioneerUsbPolicy.mode(this@PioneerDebugActivity)} / 生效=${PioneerUsbPolicy.enabled(this@PioneerDebugActivity)}\n" +
                 "VPN 已授权：${runCatching { android.net.VpnService.prepare(this@PioneerDebugActivity) == null }.getOrDefault(false)}\n" +
                 "${PioneerDebugRuntime.lastCommand}\n${PioneerDebugRuntime.snapshot().toString(2)}"
             handler.postDelayed(this, 1_000)
@@ -64,8 +64,17 @@ class PioneerDebugActivity : Activity() {
         val file = File(path)
         if (!file.exists() || file.parentFile?.canonicalPath != File(cacheDir, "pioneer-update").canonicalPath) return
         runCatching {
-            val uri = FileProvider.getUriForFile(this, "$packageName.pioneer-updates", file)
-            startActivity(Intent(Intent.ACTION_INSTALL_PACKAGE).setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            PioneerDebugUpdateGuard.install(file) {
+                val uri = FileProvider.getUriForFile(this, "$packageName.pioneer-updates", file)
+                val installer = Intent(Intent.ACTION_INSTALL_PACKAGE)
+                    .setDataAndType(uri, "application/vnd.android.package-archive")
+                    .apply { clipData = android.content.ClipData.newRawUri("APK update", uri) }
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                packageManager.queryIntentActivities(installer, 0).forEach { target ->
+                    grantUriPermission(target.activityInfo.packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                startActivity(installer)
+            }
         }.onFailure {
             PioneerDebugRuntime.log(this, "APK installer unavailable: ${it.message}")
             Toast.makeText(this, "无法打开安装器：${it.message}", Toast.LENGTH_LONG).show()

@@ -11,24 +11,43 @@ import com.shilapi.xcertplay.vehicle.runtime.VehicleMediaRuntime
 
 /** The application's only vehicle-extension assembly point. */
 internal object DiPlayVehicleIntegration {
-    private var controller: CarPlayController? = null
-    private var runtime: VehicleMediaRuntime? = null
+    /** One owner for both protection and source recovery; replacement retires both together. */
+    private class Binding(
+        val controller: CarPlayController,
+        val runtime: VehicleMediaRuntime?,
+        private val recovery: com.shilapi.xcertplay.PioneerMediaSourceRecovery?,
+    ) : java.io.Closeable {
+        override fun close() {
+            controller.vehicleSessionListener = null
+            runtime?.close()
+            recovery?.close()
+        }
+    }
+    private var binding: Binding? = null
 
     @Synchronized
     fun attach(context: Context, next: CarPlayController) {
-        if (controller === next) return
-        controller?.vehicleSessionListener = null
-        runtime?.close()
-        controller = next
-        val extension = VehicleMediaRuntime.create(context, { command ->
-            next.sendMediaButton(when (command) {
-                MediaCommand.PLAY -> CarPlayMediaButton.PLAY
-                MediaCommand.PAUSE -> CarPlayMediaButton.PAUSE
-                MediaCommand.NEXT -> CarPlayMediaButton.NEXT
-                MediaCommand.PREVIOUS -> CarPlayMediaButton.PREVIOUS
+        if (binding?.controller === next) return
+        binding?.close()
+        binding = null
+        val recovery = com.shilapi.xcertplay.PioneerMediaSourceRecovery.create(context, next)
+        val extension = try {
+            VehicleMediaRuntime.create(context, { command ->
+                next.sendMediaButton(when (command) {
+                    MediaCommand.PLAY -> CarPlayMediaButton.PLAY
+                    MediaCommand.PAUSE -> CarPlayMediaButton.PAUSE
+                    MediaCommand.NEXT -> CarPlayMediaButton.NEXT
+                    MediaCommand.PREVIOUS -> CarPlayMediaButton.PREVIOUS
+                })
+            }, { message ->
+                Log.e("DiPlay-Vehicle", message)
+                com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.log(context, message)
             })
-        }, { message -> Log.e("DiPlay-Vehicle", message) })
-        runtime = extension
+        } catch (error: Throwable) {
+            recovery?.close()
+            throw error
+        }
+        binding = Binding(next, extension, recovery)
         next.vehicleSessionListener = extension?.let { selected ->
             { token, active ->
                 selected.sessionChanged(token, active)
@@ -40,16 +59,14 @@ internal object DiPlayVehicleIntegration {
 
     @Synchronized
     fun detach(expected: CarPlayController) {
-        if (controller !== expected) return
-        expected.vehicleSessionListener = null
-        controller = null
-        runtime?.close()
-        runtime = null
+        val current = binding?.takeIf { it.controller === expected } ?: return
+        binding = null
+        current.close()
     }
 
     @Synchronized
     fun nowPlaying(expected: CarPlayController, update: CarPlayNowPlaying) {
-        if (controller === expected) runtime?.nowPlaying(snapshot(update))
+        binding?.takeIf { it.controller === expected }?.runtime?.nowPlaying(snapshot(update))
     }
 
     private fun snapshot(update: CarPlayNowPlaying) = NowPlayingSnapshot(

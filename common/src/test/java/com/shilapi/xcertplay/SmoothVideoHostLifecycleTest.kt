@@ -216,7 +216,7 @@ class SmoothVideoHostLifecycleTest {
         val holder = mock(SurfaceHolder::class.java)
         `when`(holder.surface).thenReturn(surface)
         (getField("fallbackSurfaceCallback") as SurfaceHolder.Callback).surfaceDestroyed(holder)
-        verify(restarting).beginSurfaceDetach(surface, false)
+        verifySurfaceDetach(restarting, surface)
 
         finishTeardown()
         assertTrue("Each sink leaves once its decoders have released their codecs", retiringSinks().isEmpty())
@@ -230,6 +230,18 @@ class SmoothVideoHostLifecycleTest {
     @Test @Config(sdk = [28, 30])
     fun aTimedOutShutdownKeepsItsSinkUntilTheCodecIsReleased() {
         assertTimedOutSinkRetained { shutdown("Test slow codec exit") }
+    }
+
+    private fun verifySurfaceDetach(owner: AndroidMediaSink, surface: Surface) {
+        // Absolute deadlines are chosen by the holder callback once for all sinks; a second
+        // default-argument invocation in verify() would generate a different timestamp.
+        val calls = org.mockito.Mockito.mockingDetails(owner).invocations.filter {
+            it.method.name == "beginSurfaceDetach" && it.arguments.size == 4 &&
+                it.arguments[0] === surface && it.arguments[1] == false
+        }
+        assertEquals("the holder must account for this sink", 1, calls.size)
+        val args = calls.single().arguments
+        assertEquals("the shared holder grace is retained", 500_000_000L, (args[3] as Long) - (args[2] as Long))
     }
 
     private fun assertTimedOutSinkRetained(beginTeardown: () -> Unit) {
@@ -263,7 +275,7 @@ class SmoothVideoHostLifecycleTest {
         val holder = mock(SurfaceHolder::class.java)
         `when`(holder.surface).thenReturn(surface)
         (getField("fallbackSurfaceCallback") as SurfaceHolder.Callback).surfaceDestroyed(holder)
-        verify(closing).beginSurfaceDetach(surface, false)
+        verifySurfaceDetach(closing, surface)
         assertTrue("An unconfirmed surface detach must keep the retiring sink visible", closing in retiringSinks())
 
         val released = CountDownLatch(1)

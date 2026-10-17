@@ -1,7 +1,9 @@
-# Android A 蓝牙代理
+# DP无线外挂（`:bt-proxy-android`）
 
-独立 Android 应用模块 `:bt-proxy-android`，用于旧 Android 手机上的蓝牙代理 PoC。
-使用 Kotlin 和原生 Android SDK，不依赖 `:common`、`:shared`，不打包 iAP2/MFi 身份素材。
+独立 Android 应用模块，应用名 **DP无线外挂**，把旧 Android 手机变成 DiPlay 的无线外接设备：
+与 iPhone 完成蓝牙协商（iAP2/RFCOMM），并通过 Wi-Fi 网络把字节透传给车机端。
+使用 Kotlin 与原生 Android SDK（只额外依赖 `androidx.appcompat` 与 `androidx.core` 取 DayNight、
+insets 与返回分发），不依赖 `:common`、`:shared`，不打包 iAP2/MFi 身份素材。
 Android 最低版本为 6.0（API 23），包名为 `com.shihab.diplay.btproxy`，可与 DiPlay 同时安装。
 
 ## 构建与运行
@@ -26,7 +28,32 @@ SDP 查询 12 秒超时，RFCOMM 建连 15 秒超时，成功后只接收观察 
 连接在独立线程执行，超时、取消及页面销毁会关闭 Socket。被动观察不发送数据；
 “验证 iAP2 双向握手”使用复用的协议源代码进行有界诊断，不执行身份识别或认证。
 日志记录阶段、连接耗时、接收字节数和错误，保留最近 200 行；不记录原始协议载荷。
-页面旋转或重新启动会开始新的页面日志。
+日志同时保存在内存与 `files/probe-log.txt`，旋转、切页和重启进程后仍能回看。
+
+## 界面
+
+界面复用 DiPlay 的手写 View 设计语言：色值放在 `res/values/colors.xml` 与 `res/values-night/colors.xml`
+（取自 `:common` 的 `DiPlayPalette`），形状、间距与控件由 `ui/ProxyTheme.kt` 和 `ui/ProxyComponents.kt`
+统一提供，跟随系统 day/night。
+
+每个页面是独立的 Activity，顶部使用 AndroidX 标准动作栏（`ui/ProxyActivity.kt` 提供 Toolbar、
+标题与返回箭头，二级页 `setDisplayHomeAsUpEnabled`，`android.R.id.home` 与系统返回键都回到上级页面）：
+
+- `MainActivity` 首屏自上而下是：前置条件入口（`3/5 就绪 · 蓝牙开关`）、目标 iPhone 入口、
+  启动服务 / 关闭服务开关（含一句话状态，如 `等待开启蓝牙`），随后是运行状态（链路阶段、双向字节数、
+  会话时长、监听与对端端口）与诊断、日志、设置入口；动作栏副标题显示整体状态
+  （环境就绪 / 前置条件未完成 / 透传中）。整页可滚动。
+- `ui/ReadinessActivity` 前置条件清单（每项带状态与动作）、`ui/DevicesActivity` 目标设备选择、
+  `ui/DiagnosticsActivity` 开发者诊断（SDP / RFCOMM / iAP2 握手，结果内联显示）、
+  `ui/LogActivity` 运行日志（按 phase 着色、过滤 chips、自动滚动、复制/清空）、
+  `ui/SettingsActivity` 设置（配对码、本机蓝牙地址、打开蓝牙设置）。
+- `ui/AboutActivity` 关于：本应用的定位、作用与用法，从设置页进入。
+
+二级页只渲染本页内容，不再共享首屏的卡片。
+
+状态由前台服务经进程内单例 `GatewayRuntime` 推送到界面，不再每秒轮询 `SharedPreferences`；
+`gateway` 配置项 `status`/`ports`/`iphone` 仍按原语义写入，供前台服务与 ADB 排查使用。
+`RfcommGatewayServer` 通过结构化 `stateListener` 上报阶段，服务不再用日志子串反推状态。
 
 日志也可通过 ADB 获取（多设备时添加 `-s <Android A 序列号>`）：
 
@@ -60,7 +87,7 @@ Socket 连接成功不等于双向协议收发、认证或完整 CarPlay 成功�
 
 ## 临时固定连接码（2026-10-12）
 
-代理设备与 DiPlay 设备统一使用代码常量 `123456`。DiPlay 的“代理设备 · 查找与连接”
+外接端设备与 DiPlay 车机端统一使用代码常量 `123456`。DiPlay 的“代理设备 · 查找与连接”
 页面发现代理后自动保存设备身份，点击连接即可，不再要求首次输入配对码。
 旧私有令牌会自动迁移为固定连接码。IP 和端口继续通过发现获取，不内置对端 IP。
 此临时开发模式覆盖上文首次配对码流程；iPhone 与代理设备的蓝牙配对仍由系统完成。
@@ -69,7 +96,7 @@ Socket 连接成功不等于双向协议收发、认证或完整 CarPlay 成功�
 
 车机 OEM 防火墙（`iptables_rules.sh`）只放行入站 UDP `9911/9912/5656`，且代理按请求源端口
 回包——DiPlay 的 UDP 广播发现按 `9911 → 5656 → 9912` 顺序占用源端口，全部被占时才回落
-临时端口并记录告警日志。代理端无需改动。已删除此前的 `DEVELOPMENT_DIRECT_CONNECTION`
+临时端口并记录告警日志。外接端无需改动。已删除此前的 `DEVELOPMENT_DIRECT_CONNECTION`
 固定 IP 直连开关：IP 和端口始终通过发现获取，不内置对端 IP。
 验证日志：`Gateway broadcast discovery bound source port=…`（钉口成功）与
 `Gateway discovered address=… source=udp-broadcast`（发现成功）。

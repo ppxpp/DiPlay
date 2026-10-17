@@ -34,12 +34,14 @@ class VehicleMediaRuntime private constructor(
     private var instrument = CeamInstrumentMediaSink(report)
     private data class Retained(val snapshot: NowPlayingSnapshot, val updatedAt: Long)
     @Volatile private var latest = Retained(NowPlayingSnapshot(), SystemClock.elapsedRealtime())
-    private var published: NowPlayingSnapshot? = null
+    private var instrumentPublished: NowPlayingSnapshot? = null
+    private var guardPublished: NowPlayingSnapshot? = null
     private var progressTask: ScheduledFuture<*>? = null
-    private var fallbackResult: Boolean? = null
+    private var companionPublishResult: Boolean? = null
     @Volatile private var retriedGuard = false
 
     init {
+        prepareCompanion(this.context)
         // Prepare the input SDK while connecting; commands still require a live session.
         main.post {
             if (!disposed) {
@@ -70,8 +72,9 @@ class VehicleMediaRuntime private constructor(
             progressTask = null
             instrument.close()
             instrument = CeamInstrumentMediaSink(report)
-            published = null
-            fallbackResult = null
+            instrumentPublished = null
+            guardPublished = null
+            companionPublishResult = null
             if (!active || generation.get() != revision || disposed) return@execute
             publishLatest()
             progressTask = worker.scheduleAtFixedRate({
@@ -94,7 +97,6 @@ class VehicleMediaRuntime private constructor(
                 }
                 protected = acquired && generation.get() == revision && session != null && !disposed
                 if (!protected) {
-                    VehicleAudioRouting.selected.pauseLocalPlayer(context, report)
                     report("Vehicle: protection degraded; one pause cannot block subsequent native playback")
                 }
             } finally { latch.countDown() }
@@ -148,7 +150,8 @@ class VehicleMediaRuntime private constructor(
     private fun refreshPublished(revision: Long) {
         worker.execute {
             if (generation.get() == revision && session != null && !disposed) {
-                published = null
+                instrumentPublished = null
+                guardPublished = null
                 publishLatest()
             }
         }
@@ -172,17 +175,18 @@ class VehicleMediaRuntime private constructor(
         }
         if (retained.durationMillis > 0) elapsed = elapsed.coerceAtMost(retained.durationMillis)
         val snapshot = retained.copy(elapsedMillis = elapsed)
-        if (snapshot != published) {
-            var accepted = instrument.publish(snapshot)
-            if (!accepted) {
-                accepted = protected && (guard as? QQMusicPlaybackGuardClient)?.publish(snapshot) == true
-                if (fallbackResult != accepted) {
-                    report("Vehicle: widget instrument fallback accepted=$accepted; display unverified")
-                    fallbackResult = accepted
-                }
+        // CEAM carries text only. The companion independently needs play state and position,
+        // including a retained snapshot for widgets which connect after this publication.
+        if (snapshot != instrumentPublished && instrument.publish(snapshot)) {
+            instrumentPublished = snapshot
+        }
+        if (protected && snapshot != guardPublished) {
+            val accepted = (guard as? QQMusicPlaybackGuardClient)?.publish(snapshot) == true
+            if (companionPublishResult != accepted) {
+                report("Vehicle: companion media state accepted=$accepted; display unverified")
+                companionPublishResult = accepted
             }
-            // Failure must remain retryable even when a paused song has no further updates.
-            if (accepted) published = snapshot
+            if (accepted) guardPublished = snapshot
         }
     }
 
@@ -230,6 +234,20 @@ class VehicleMediaRuntime private constructor(
         }
         private val protectionWorker = Executors.newSingleThreadExecutor { task ->
             Thread(task, "diplay-playback-guard").apply { isDaemon = true }
+        }
+        private var startupCompanion: QQMusicPlaybackGuardClient? = null
+        /** Bind the bridge only, even before CarPlay connects. Does not acquire playback protection. */
+        fun prepareCompanion(context: Context) {
+            val app = context.applicationContext
+            protectionWorker.execute {
+                if (!com.shilapi.xcertplay.pioneer.PioneerUsbPolicy.matchesDevice()) return@execute
+                val log: (String) -> Unit = { com.shilapi.xcertplay.pioneer.PioneerDebugRuntime.log(app, it) }
+                runCatching {
+                    val client = startupCompanion ?: QQMusicPlaybackGuardClient(app, log, onLost = {}, onCommand = { false }, onAvailable = {})
+                        .also { startupCompanion = it }
+                    client.prepare()
+                }.onFailure { log("Vehicle: companion warm-up failed ${it.javaClass.simpleName}") }
+            }
         }
         fun create(context: Context, sendCommand: (MediaCommand) -> Boolean, report: (String) -> Unit): VehicleMediaRuntime? =
             if (VehicleAudioRouting.available && context.getSharedPreferences("xcertplay_airplay", Context.MODE_PRIVATE)

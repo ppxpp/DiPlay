@@ -940,4 +940,43 @@
     <string name="black_corner_overlay_off">關閉</string>
     <string name="black_corner_overlay_value">%1$d dp</string>
     <string name="iphone_corner_mask_mode">iPhone 遮罩（實驗性）</string>
+    <!-- Startup disclaimer gate -->
+    <string name="disclaimer_title">使用前請閱讀</string>
+    <string name="disclaimer_subtitle">繼續之前請閱讀。它說明你可以如何使用本應用程式。</string>
+    <string name="disclaimer_page1_title">僅供學習研究</string>
+    <string name="disclaimer_page1_l1">DiPlay 是<b>實驗性軟體</b>，用於在<b>你自己的裝置</b>上學習與研究 CarPlay，尚不成熟。</string>
+    <string name="disclaimer_page1_l2">使用本軟體的風險與後果由<b>使用者自行承擔</b>。</string>
+    <string name="disclaimer_page2_title">不保證安全與穩定</string>
+    <string name="disclaimer_page2_l1">軟體依<b>「現況」</b>提供，<b>不保證</b>安全、穩定、無錯誤或不中斷。</string>
+    <string name="disclaimer_page2_l2">可能存在缺陷或安全漏洞，我們<b>不提供任何保證或技術支援</b>。</string>
+    <string name="disclaimer_page2_l3">請勿將 DiPlay 用於任何關係安全的場景。</string>
+    <string name="disclaimer_page3_title">不得用於真實場景</string>
+    <string name="disclaimer_page3_l1">僅供<b>停車狀態下</b>的個人學習與測試。</string>
+    <string name="disclaimer_page3_warn">請勿在駕駛過程中使用。</string>
+    <string name="disclaimer_page3_l2">請勿用於<b>商業產品</b>，或對外散布、為第三方部署。</string>
+    <string name="disclaimer_page3_l3">請自行遵守當地交通及無線電相關法規；改裝車機<b>可能影響原廠保固</b>。</string>
+    <string name="disclaimer_checkbox">不再顯示此頁面（版本更新後會再次顯示）</string>
+    <string name="disclaimer_agree">同意並繼續</string>
+    <string name="disclaimer_disagree">不同意並結束</string>
+    <!-- Proxy gateway (translation gaps) -->
+    <string name="gateway_connect">透過代理連線 CarPlay</string>
+    <string name="gateway_description">代理會透過藍牙連線到你的 iPhone。DiPlay 會在你的 Wi-Fi 上找到它,不需要 IP 位址或配對碼。</string>
+    <string name="gateway_forget">選擇其他代理</string>
+    <string name="gateway_forget_confirm">清除已選取的代理並重新搜尋?</string>
+    <string name="gateway_found_paired">已找到代理 · %1$s\n點一下下方即可連線 CarPlay。</string>
+    <string name="gateway_found_unpaired">已找到 A · %1$s\n尚未配對。請輸入一次 A 的配對資料以儲存。</string>
+    <string name="gateway_invalid_pairing">配對資料無效或裝置不符</string>
+    <string name="gateway_not_found">找不到代理。請確認代理執行中,且兩台裝置在同一區域網路,然後重新搜尋。</string>
+    <string name="gateway_pair">配對這個 A</string>
+    <string name="gateway_pairing_help">在 A 上開啟「配對資料」。輸入其配對碼,或在此貼上完整的配對資料。只有第一次需要。</string>
+    <string name="gateway_pairing_input">配對資料或配對碼</string>
+    <string name="gateway_pairing_rejected">配對失敗。請檢查配對資料,以及 A 是否可用。</string>
+    <string name="gateway_ports_broadcast">連接埠 · 探索來源 %1$d → 代理 UDP %2$d\n資料連線 → 代理 TCP %3$s:%4$d</string>
+    <string name="gateway_ports_nsd">連接埠 · 探索來源 NSD\n資料連線 → 代理 TCP %1$s:%2$d</string>
+    <string name="gateway_ready">已選取代理 · 可連線</string>
+    <string name="gateway_save_pairing">驗證並儲存</string>
+    <string name="gateway_search">重新尋找代理</string>
+    <string name="gateway_searching">正在搜尋代理…</string>
+    <string name="gateway_title">代理裝置 · 尋找並連線</string>
+    <string name="gateway_wifi_required">請先在 DiPlay 連線設定中儲存目前的 Wi-Fi 名稱與密碼。</string>
 </resources>

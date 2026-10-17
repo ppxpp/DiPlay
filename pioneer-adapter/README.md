@@ -50,16 +50,15 @@ adb -s 220739d4f21e56b6 shell appops get com.gtmc.app.fengyunyx.b819 ACTIVATE_VP
 
 不要把 BIND_VPN_SERVICE 当作运行时权限去 pm grant。看到 ACTIVATE_VPN allow 后仍需验证实际隧道与数据通信；正常重启通常保留权限，但本车机尚需实测重启后的行为。
 
-先在 usbcheck 点“退出并关闭调试”，确保它不占用 USB。打开正式 DiPlay，在设置的“诊断”页面进入“局域网调试”。该页显示 IPv4、实际端口、口令和会话状态，可启动有线连接、重试 VPN、停止会话。设置入口只在匹配的车机/适配已启用时显示，不增加第二个启动图标。
+先在 usbcheck 点“退出并关闭调试”，确保它不占用 USB。打开正式 DiPlay，在设置的“诊断”页面进入“局域网调试”。该页显示 IPv4、实际端口和会话状态，可启动有线连接、重试 VPN、停止会话。设置入口只在匹配的车机/适配已启用时显示，不增加第二个启动图标。
 
 目标车机以有线方式打开 DiPlay 时会自动启动 TCP 服务；原来选择无线连接时，可从调试页主动启动。它是独立前台服务，停止 CarPlay 后继续运行，便于导出失败报告和更新 APK。要关闭监听，点调试页“关闭 TCP 调试”。重新打开有线页面会再次启动。
 
 ## 电脑通过 LAN 调试
 
-电脑与车机处于同一局域网。使用页面显示的 IP/口令，不固定旧热点地址。优先端口 8721，绑定失败再试 9911、9912，均来自车机已知放行清单；不使用随机端口，不占用高德 5656。监听成功还需要真实 status 响应才能认定网络可达。
+电脑与车机处于同一局域网。使用页面显示的 IP，不固定旧热点地址。优先端口 8721，绑定失败再试 9911、9912，均来自车机已知放行清单；不使用随机端口，不占用高德 5656。监听成功还需要真实 status 响应才能认定网络可达。
 
 ```sh
-export DIPLAY_DEBUG_TOKEN='页面显示的口令'
 /usr/bin/python3 pioneer-adapter/tools/diplay_debug.py --host <车机IP> --port <显示端口> status
 /usr/bin/python3 pioneer-adapter/tools/diplay_debug.py --host <车机IP> --port <显示端口> start-wired
 /usr/bin/python3 pioneer-adapter/tools/diplay_debug.py --host <车机IP> --port <显示端口> retry-vpn
@@ -87,7 +86,7 @@ export DIPLAY_DEBUG_TOKEN='页面显示的口令'
 
 车机打开系统安装确认，需用户点击安装。新 APK 必须同包名、同签名。安装会结束进程，完成后重新打开 DiPlay/局域网调试。若车机缺少系统安装器，调试日志会记录失败，需使用人工安装方式或恢复 USB ADB。
 
-状态和控制没有取得 ADB/shell 权限。导出内容为 DiPlay 已脱敏的会话日志、适配模块日志和状态，不打包配对/MFi 素材，不读取任意文件。TCP 命令要求页面上的随机口令。
+状态和控制没有取得 ADB/shell 权限。导出内容为 DiPlay 已脱敏的会话日志、适配模块日志和状态，不打包配对/MFi 素材，不读取任意文件。TCP 命令不再校验口令；同一网络中能够访问该端口的设备可以调用调试功能。客户端的可选 `--token` 参数仅用于兼容尚未升级的旧服务。
 
 TCP 与无线 CarPlay 共用车机有限的允许端口。虽然优先选择 8721 以留出 9911/9912，仍须以实际端口为准；回测原无线方案时可先关闭 TCP 服务。本轮的目标是有线验证。
 
@@ -130,3 +129,10 @@ TCP 与无线 CarPlay 共用车机有限的允许端口。虽然优先选择 872
 先保持同一音乐、缓冲、100% 分辨率及 60 帧设置采集数分钟，再按 ON → OFF → ON 比较，每段用完整 `export` 保存报告。新 `Audio: io stats` 分别记录收到的 RTP 总字节（含头部）、送入写入函数的 PCM 字节、AudioTrack 接受的字节、未写完字节与退出原因；RTP 和 PCM 字节不可直接相减。PCM 应满足 `pcmBytes = writtenBytes + unwrittenBytes`，停止会话的末尾窗口单独统计。`stall-timeout` 表示连续零写入达到现有约 250ms 上限，`error-*` 为 AudioTrack 错误，另区分停止、线程中断、异常和无 track。
 
 比较供给不足、重新缓冲、未写完字节及队列趋势；固定速率即使减少断音，若延迟持续增加也不能通过验收。开关不会改变缓存裁剪、反馈进度或重新缓冲策略。
+
+
+### 本地UI与页面生命周期对照（v78起）
+
+`host-ui --action SETTINGS_OPEN|SETTINGS_CLOSE|BACKGROUND|FOREGROUND` 仅在已识别车机可用，通过主线程执行应用内动作。关闭设置保留未保存编辑确认流程；返回success=false时不要自动丢弃编辑。超时表示动作可能仍会执行，应先检查新鲜status。`host.settingsMenuOpen` 和 `host.hostWindowFocused` 辅助确认页面状态；前后台调用返回不等于首帧恢复，需检查视频计数、Surface日志和计时之外的快照。`UI_SETTINGS_OPEN`分段记录load、baseline、build耗时；v79额外记录rebuilt以核对控件复用。验证记录见[交互与生命周期续测](../2026-10-16-交互卡顿实车对照与生命周期验证记录.md)。
+
+`restart-app` 只用于已识别先锋车机的本应用进程回收验证：响应后由独立线程延迟结束本进程，结束前安排3秒后重新打开本应用。不会清除配对或偏好，但会终止活动会话；以新PID及连接状态确认恢复。`host-ui FOREGROUND` 优先将当前本应用任务带到前台，返回后仍应检查窗口焦点和视频新帧。

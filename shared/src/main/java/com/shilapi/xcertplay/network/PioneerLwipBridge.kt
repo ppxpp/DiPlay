@@ -90,7 +90,7 @@ internal class PioneerLwipBridge(
                         rx++; frames++; bytes += frame.size
                     }
                     repeat(16) {
-                        PioneerLwipRuntime.portCommands.poll()?.let { c ->
+                        PioneerLwipRuntime.pollPortCommand()?.let { c ->
                             synchronized(c) {
                                 c.success = !c.cancelled && c.session == session && PioneerLwipNative.port(c.port, c.udp, c.add)
                                 com.shilapi.xcertplay.pioneer.PioneerDiagnostics.record(session, "port-registration", System.nanoTime()-c.createdNs, !c.success)

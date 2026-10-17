@@ -153,18 +153,48 @@ Use this APK for a standalone connection test.
 Update the existing test app with the same signing key to keep its settings.
 Different signing keys cannot update the same installed application.
 
+## Sign every APK with one identity
+
+Every application module uses one keystore for debug and release, and the WeCarFlow repack in
+`wecarflow/` reads the same file, so the head unit sees a single signature across DiPlay,
+`usbcheck`, `bluetooth-probe` and WeCarFlow.
+
+Provision it once per machine:
+
+```sh
+./scripts/provision-signing.sh
+```
+
+The script creates the keystore and `signing.properties` in a `.signing` directory above this
+repository, links `DiPlay/.signing` and `DiPlay/wecarflow/.signing` to it, and prints the certificate SHA-256
+along with the values to enter as GitHub Actions secrets. The keystore, the passwords and the
+`.signing/` directory stay outside Git, and `scripts/check_public_tree.py` rejects them if they are
+ever added to the tree. The script is idempotent and never overwrites an existing key.
+
+Each value resolves in this order:
+
+1. `.signing/signing.properties` keys `storeFile`, `storePassword`, `keyAlias`, `keyPassword`
+2. `-Psigning.storeFile=…` and the other `-Psigning.*` Gradle properties
+3. `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`
+4. `storeFile` additionally falls back to `.signing/repack.keystore`
+
+While the identity is incomplete, `checkSharedSigning` fails before any APK is produced.
+Unit tests and lint do not depend on it, so a checkout without signing material can still be tested.
+Re-signing with a different key means the installed apps cannot be updated in place: uninstall them
+first and accept that their data goes with them.
+
+GitHub Actions reads the same four values from the `SIGNING_KEYSTORE_BASE64`,
+`SIGNING_KEYSTORE_PASSWORD`, `SIGNING_KEY_ALIAS` and `SIGNING_KEY_PASSWORD` repository secrets and
+materialises `.signing/` before Gradle runs, so CI signs with the same certificate as local builds.
+
 ## Build a release APK
 
-Prepare the runtime assets as described in the car-test procedure.
-Set these environment variables locally:
+Prepare the runtime assets as described in the car-test procedure, and provision the signing identity
+described above.
 
 | Variable | Value |
 | --- | --- |
 | `DIPLAY_AUTH_ASSETS_DIR` | Optional override; defaults to `.private/runtime-assets` in the project root |
-| `ANDROID_KEYSTORE_PATH` | Path to your Android signing keystore |
-| `ANDROID_KEYSTORE_PASSWORD` | Keystore password |
-| `ANDROID_KEY_ALIAS` | Signing key alias |
-| `ANDROID_KEY_PASSWORD` | Signing key password |
 
 Keep the keystore and passwords outside Git.
 Run the release checks and build:
@@ -193,4 +223,13 @@ The retired `build-beta.py` helper is no longer part of the build procedure.
 | Java or Gradle JDK version is incorrect | Set the terminal JDK and Android Studio Gradle JDK to Java 25. |
 | Authentication asset check fails | Restore the two files under `.private/runtime-assets/offline-mfi/`, or set `DIPLAY_AUTH_ASSETS_DIR`. |
 | Standalone task reports missing authentication files | Check the external directory path and both required files. |
+| `checkSharedSigning` fails | Run `./scripts/provision-signing.sh`, or set the `ANDROID_KEYSTORE_*` variables. |
 | Android rejects an app update | Use the same application ID and signing key as the installed app. |
+
+### Source validation without runtime authentication
+
+Use `./gradlew -PdiplaySourceOnly=true :mobile:assembleDebug` for CI or a clean checkout
+without private CarPlay authentication. This mode excludes the local runtime asset directory
+and still rejects credential files added to other APK asset directories. Such APKs cannot
+independently authenticate CarPlay. Ordinary local/release builds keep requiring both files;
+`assembleStandaloneDebug` also explicitly rejects source-only mode.

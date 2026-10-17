@@ -2,6 +2,8 @@ plugins { alias(libs.plugins.android.application) }
 android {
     namespace = "com.shilapi.xcertplay.btprobe"
     compileSdk { version = release(37) }
+    ndkVersion = "28.2.13676358"
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.10.2" } }
     defaultConfig {
         // 车机的安装白名单只放行少量包名（如 com.tencent.mm）；
         // 其他包名 adb install 会报 INSTALL_FAILED_VERIFICATION_FAILURE: app is not in the whitelist。
@@ -9,9 +11,10 @@ android {
         applicationId = providers.gradleProperty("probeApplicationId").orElse("com.tencent.wecarflow").get()
         minSdk = 23
         targetSdk = 37
-        versionCode = 4
-        versionName = "0.4.0-audio-probe"
+        versionCode = 10
+        versionName = "0.6.2-usb-bt-attribution"
         multiDexEnabled = true
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11

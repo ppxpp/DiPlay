@@ -940,4 +940,22 @@
     <string name="black_corner_overlay_off">关闭</string>
     <string name="black_corner_overlay_value">%1$d dp</string>
     <string name="iphone_corner_mask_mode">iPhone 遮罩（实验性）</string>
+    <!-- Startup disclaimer gate -->
+    <string name="disclaimer_title">使用前请阅读</string>
+    <string name="disclaimer_subtitle">继续之前请阅读。它说明你可以如何使用本应用。</string>
+    <string name="disclaimer_page1_title">仅供学习研究</string>
+    <string name="disclaimer_page1_l1">DiPlay 是<b>实验性软件</b>，用于在<b>你自己的设备</b>上学习和研究 CarPlay，尚不成熟。</string>
+    <string name="disclaimer_page1_l2">使用本软件的风险与后果由<b>使用者自行承担</b>。</string>
+    <string name="disclaimer_page2_title">不保证安全与稳定</string>
+    <string name="disclaimer_page2_l1">软件按<b>“现状”</b>提供，<b>不保证</b>安全、稳定、无错误或运行不中断。</string>
+    <string name="disclaimer_page2_l2">可能存在缺陷或安全漏洞，我们<b>不提供任何保证或技术支持</b>。</string>
+    <string name="disclaimer_page2_l3">请勿将 DiPlay 用于任何关系安全的场景。</string>
+    <string name="disclaimer_page3_title">不得用于真实场景</string>
+    <string name="disclaimer_page3_l1">仅供<b>停车状态下</b>的个人学习与测试。</string>
+    <string name="disclaimer_page3_warn">请勿在驾驶过程中使用。</string>
+    <string name="disclaimer_page3_l2">请勿用于<b>商业产品</b>，或对外分发、为第三方部署。</string>
+    <string name="disclaimer_page3_l3">请自行遵守当地交通及无线电相关法规；改装车机<b>可能影响原厂保修</b>。</string>
+    <string name="disclaimer_checkbox">不再显示此页面（版本更新后会再次显示）</string>
+    <string name="disclaimer_agree">同意并继续</string>
+    <string name="disclaimer_disagree">不同意并退出</string>
 </resources>

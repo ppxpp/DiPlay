@@ -192,6 +192,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
     private var pendingWireless = false
     private var bluetoothSettingsVisited = false
     private var initialLaunch = true
+    private var disclaimerAcknowledged = false
     private var notificationTransport = true
     private var exportInProgress = false
     private var usbPermissionOperation: UsbPermissionSetup.Operation? = null
@@ -365,7 +366,17 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         PioneerDebugIntegration.ensure(this)
+        com.shilapi.xcertplay.vehicle.runtime.VehicleMediaRuntime.prepareCompanion(this)
         com.shilapi.xcertplay.pioneer.CamryDayNight.start()
+        disclaimerAcknowledged = savedInstanceState?.getBoolean("disclaimer_ack") ?: false
+        if (isLauncherIntent(intent) && !disclaimerAcknowledged && !Disclaimer.acceptedForCurrentVersion(this)) {
+            page = "disclaimer"
+            render()
+            onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() = disclaimerExit()
+            })
+            return
+        }
         // Back on the home page finishes this activity while the session runs on, so the icon lands here.
         if (savedInstanceState == null && isLauncherIntent(intent) && CarPlayBackgroundSession.hasSession()) {
             openProjection(); finish(); return
@@ -398,7 +409,10 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             ?.let { runCatching { SettingsCategory.valueOf(it) }.getOrNull() }
         setupStep = savedInstanceState?.getInt("setup_step") ?: SetupGuide.STEP_CAR
         setupFromSettings = savedInstanceState?.getBoolean("setup_from_settings") ?: false
-        page = savedInstanceState?.getString("page") ?: intent.getStringExtra("page")
+        // Consent was checked above. A recreated gate must continue into the app rather than
+        // restoring the disclaimer page saved just before the user pressed Agree.
+        page = savedInstanceState?.getString("page")?.takeUnless { it == "disclaimer" }
+            ?: intent.getStringExtra("page")
             ?: if (RemoteGatewaySettings.loadSelected(this) == null && setupError == null && SetupGuide.shouldOpenOnLaunch(SetupGuide.seen(this),
                     DiPlayPreferences.phoneAddress(this) != null)) "setup" else "home"
         render()
@@ -422,6 +436,10 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent); setIntent(intent)
         connectionSettingsReturnCategory = null
+        // A re-tap on the launcher icon before consent still has to pass the gate, not resume projection.
+        if (isLauncherIntent(intent) && !disclaimerAcknowledged && !Disclaimer.acceptedForCurrentVersion(this)) {
+            page = "disclaimer"; render(); return
+        }
         // CarPlay runs in its own task, so the launcher icon resumes this one. Settings opened from
         // CarPlay carry a "page" extra, which isLauncherIntent rejects.
         if (isLauncherIntent(intent) && CarPlayBackgroundSession.hasSession()) {
@@ -446,7 +464,20 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             DiPlayPreferences.phoneAddress(this) != null && setupError == null &&
             !CarPlayBackgroundSession.hasSession()
     }
+    private fun disclaimerStyle() = DisclaimerStyle(
+        BG, TEXT, MUTED, ACCENT, ON_ACCENT, BUTTON, BORDER, WARNING, resources.displayMetrics.density,
+    )
+
+    private fun disclaimerAgree(doNotShowAgain: Boolean) {
+        disclaimerAcknowledged = true
+        Disclaimer.accept(this)
+        recreate()
+    }
+
+    private fun disclaimerExit() = finishAffinity()
+
     override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("disclaimer_ack", disclaimerAcknowledged)
         outState.putString("page", page)
         outState.putString("settings_category", settingsCategory.name)
         connectionSettingsReturnCategory?.let { outState.putString("connection_settings_return_category", it.name) }
@@ -493,6 +524,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         // Results from the image picker and crop screens arrive before onResume.
         enforceInterfaceSize()
         CenterMapOverlay.onDiPlayScreenShown()
+        // Coming back from the "display over other apps" screen grants the debug display its window.
     }
 
     override fun onStop() {
@@ -634,6 +666,13 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         enforceInterfaceSize()
         refreshAppearance()
         applyWindowAppearance()
+        // The gate is shown before the app becomes usable; re-rendered here so a rotation keeps it.
+        if (page == "disclaimer") {
+            setContentView(DisclaimerScreen.build(this, disclaimerStyle(), ::disclaimerAgree, ::disclaimerExit))
+            Disclaimer.markShown(this)
+            renderedPage = page
+            return
+        }
         // A pending assignment belongs to the widgets being replaced, never to another page.
         if (!appearanceOnly) cancelKeyLearning()
         // The backup server lives only while its page is shown, however the driver left it.
@@ -1762,6 +1801,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             card.addView(label(destination + getString(R.string.nothing_is_sent_automatically_protocol_payloads_and_creden), 14, MUTED).apply { setPadding(0, dp(12), 0, 0) })
             toggle(card, getString(R.string.settings_fps_counter), getString(R.string.settings_fps_counter_description),
                 AirPlayPersistence.loadFpsCounter(this)) { AirPlayPersistence.saveFpsCounter(this, it) }
+
         }
         filteredSection(content, SettingsSection.AUTOMATIC_CONNECTION,
             getString(R.string.automatic_connection), R.drawable.ic_dp_automation) { card ->

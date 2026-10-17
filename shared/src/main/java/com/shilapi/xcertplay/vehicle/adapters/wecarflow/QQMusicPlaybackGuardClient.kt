@@ -25,14 +25,18 @@ internal class QQMusicPlaybackGuardClient(
     private val callback = object : Binder() {
         override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
             if (code == INTERFACE_TRANSACTION) { reply?.writeString(DESCRIPTOR); return true }
-            if (code != 1) return super.onTransact(code, data, reply, flags)
+            if (code != 1 && code != 2) return super.onTransact(code, data, reply, flags)
             data.enforceInterface(DESCRIPTOR)
             val command = when (data.readInt()) {
                 1 -> MediaCommand.PLAY; 2 -> MediaCommand.PAUSE
                 4 -> MediaCommand.NEXT; 5 -> MediaCommand.PREVIOUS
                 else -> null
             }
-            val accepted = !closed && command != null && onCommand(command)
+            val duplicate = if (code == 2) {
+                val signature = data.readString().orEmpty()
+                !com.shilapi.xcertplay.vehicle.adapters.pioneer.PalSteeringWheelInputAdapter.acceptBridgeEvent(signature)
+            } else false
+            val accepted = !closed && command != null && (duplicate || onCommand(command))
             reply?.writeNoException()
             reply?.writeInt(if (accepted) 1 else 0)
             return true
@@ -54,10 +58,27 @@ internal class QQMusicPlaybackGuardClient(
         override fun onNullBinding(name: ComponentName) { connected.countDown() }
     }
 
+    fun prepare(): Boolean = synchronized(this) {
+        if (closed) return@synchronized false
+        val service = context.packageManager.getServiceInfo(COMPONENT, 0)
+        if (service.processName != "com.tencent.wecarflow:carplayguard") {
+            report("Vehicle: bridge warm-up skipped; companion upgrade required")
+            return@synchronized false
+        }
+        if (!bound) bound = context.bindService(Intent().setComponent(COMPONENT), connection, Context.BIND_AUTO_CREATE)
+        report("Vehicle: isolated companion warm-up bound=$bound; playback not requested")
+        bound
+    }
+
     override fun acquire(): Boolean {
         try {
             synchronized(this) {
                 if (closed) return false
+                val service = context.packageManager.getServiceInfo(COMPONENT, 0)
+                if (service.processName != "com.tencent.wecarflow:carplayguard") {
+                    report("Vehicle: protection requires isolated companion upgrade; original app will not be started")
+                    return false
+                }
                 if (!bound) bound = context.bindService(Intent().setComponent(COMPONENT), connection, Context.BIND_AUTO_CREATE)
                 if (!bound) {
                     report("Vehicle: native playback protection unavailable; companion service missing")
@@ -91,7 +112,7 @@ internal class QQMusicPlaybackGuardClient(
         } finally { request.recycle(); response.recycle() }
     }
 
-    /** Fallback for the fixed WeCarFlow widget service while protection is active. */
+    /** Full retained media state for WeCarFlow widgets, independently of CEAM text output. */
     fun publish(snapshot: NowPlayingSnapshot): Boolean {
         if (closed) return false
         val service = peer ?: return false
@@ -111,7 +132,7 @@ internal class QQMusicPlaybackGuardClient(
                 response.readInt() == 1
             }
         } catch (error: Exception) {
-            report("Vehicle: instrument fallback failed ${error.javaClass.simpleName}: ${error.message}")
+            report("Vehicle: companion media state failed ${error.javaClass.simpleName}: ${error.message}")
             false
         } finally { request.recycle(); response.recycle() }
     }

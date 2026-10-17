@@ -6,6 +6,8 @@
 
 > 專案以比亞迪汽車為主要支援對象。其他品牌可能可以執行，但不在一般支援範圍內；特定韌體的個別整合不代表整個品牌受到支援。
 
+> **免責聲明：** DiPlay 與 Apple 無任何關聯，未獲 Apple 授權或認可，也不是 MFi 認證產品。軟體依「現況」提供，無任何擔保（GPL-3.0）。使用所涉及的行車安全、法規、隱私與智慧財產權風險由使用者自行承擔——安裝或散布前請先閱讀 [DISCLAIMER.md](DISCLAIMER.md)。
+
 [下載與繁體中文網站](https://shihabal3amri.github.io/DiPlay/zh-Hant/) · [0.2.20 版本](https://github.com/shihabal3amri/DiPlay/releases/tag/v0.2.20) · [回報問題](https://github.com/shihabal3amri/DiPlay/issues/new/choose)
 
 ![DiPlay 主畫面](site/assets/home.png)

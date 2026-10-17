@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DayNight so system chrome (status bar icons, IME, dialogs) follows the palette, while every
+  surface the screens draw themselves resolves through the colours resources.
+-->
+<resources>
+    <style name="Theme.BtProxy" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:colorBackground">@color/proxy_background</item>
+        <item name="android:windowBackground">@color/proxy_background</item>
+        <item name="android:textColorPrimary">@color/proxy_text</item>
+        <item name="android:textColorSecondary">@color/proxy_text_muted</item>
+        <item name="android:textColorHint">@color/proxy_text_muted</item>
+        <item name="android:colorAccent">@color/proxy_accent</item>
+        <item name="android:colorControlActivated">@color/proxy_accent</item>
+        <item name="colorAccent">@color/proxy_accent</item>
+        <item name="colorPrimary">@color/proxy_accent</item>
+        <item name="android:statusBarColor">@color/proxy_background</item>
+        <item name="android:navigationBarColor">@color/proxy_background</item>
+        <item name="android:windowSoftInputMode">adjustResize</item>
+    </style>
+    <style name="TextAppearance.BtProxy.ToolbarTitle" parent="TextAppearance.Widget.AppCompat.Toolbar.Title">
+        <item name="android:textSize">20sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textColor">@color/proxy_text</item>
+    </style>
+
+    <style name="TextAppearance.BtProxy.ToolbarSubtitle" parent="TextAppearance.Widget.AppCompat.Toolbar.Subtitle">
+        <item name="android:textSize">13sp</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textColor">@color/proxy_text_muted</item>
+    </style>
+</resources>

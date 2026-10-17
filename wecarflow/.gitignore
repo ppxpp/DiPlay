@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.private/
+/.signing
+build/
+release/
+
+# Decompiled original and generated code are reproducible from the fixed private baseline.
+apktool/
+*.apk
+*.dex
+*.class
+*.pk8
+*.p7b
+*.pem
+*.key
+*.jks
+*.keystore
+.DS_Store

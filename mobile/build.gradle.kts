@@ -3,6 +3,10 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// Source validation builds never bundle the private runtime identity, even on developer machines.
+// Normal local/release builds still require it; opt in explicitly only for source verification.
+val sourceOnlyBuild = providers.gradleProperty("diplaySourceOnly").map { it.toBooleanStrict() }.getOrElse(false)
+
 // Local builds bundle the project-local identity by default. Keep it outside Git.
 // DIPLAY_AUTH_ASSETS_DIR can explicitly select a different runtime identity directory.
 val localAuthenticationAssets = providers.environmentVariable("DIPLAY_AUTH_ASSETS_DIR")
@@ -20,35 +24,22 @@ android {
         applicationId = "com.gtmc.app.fengyunyx.b819"
         minSdk = 23
         targetSdk = 37
-        versionCode = 77
-        versionName = "0.2.28-car-audio-stable-wired"
+        versionCode = 97
+        versionName = "0.2.20_凯美瑞A导航适配版_0.1.0"
 
     }
 
 
-    sourceSets.getByName("main").assets.directories.add(localAuthenticationAssets.absolutePath)
-
-    signingConfigs {
-        create("release") {
-            storeFile = file(
-                providers.environmentVariable("ANDROID_KEYSTORE_PATH")
-                    .getOrElse("missing-release-keystore.jks"),
-            )
-            storePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").getOrElse("")
-            keyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").getOrElse("")
-            keyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").getOrElse("")
-        }
-    }
+    if (!sourceOnlyBuild) sourceSets.getByName("main").assets.directories.add(localAuthenticationAssets.absolutePath)
 
     buildTypes {
         debug {
-            versionNameSuffix = "-hud-test"
+//            versionNameSuffix = "-hud-test"
         }
         release {
             optimization {
                 enable = false
             }
-            signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {
@@ -90,16 +81,18 @@ val rejectBundledCredentials by tasks.registering {
     group = "verification"
     description = "Reject unexpected credential files in APK assets."
     val filesToCheck = credentialAssets
+    val sourceOnly = sourceOnlyBuild
     val allowed = localAuthenticationAssets.let { dir ->
         listOf("identity.pk8", "certificate.p7b").map { dir.resolve("offline-mfi/$it").canonicalFile }.toSet()
     }
     inputs.files(filesToCheck)
+    inputs.property("sourceOnlyBuild", sourceOnly)
     doLast {
-        check(allowed.all { it.isFile && it.length() > 0 }) {
+        check(sourceOnly || allowed.all { it.isFile && it.length() > 0 }) {
             "CarPlay authentication assets are missing or empty. Provision .private/runtime-assets/offline-mfi " +
                 "or set DIPLAY_AUTH_ASSETS_DIR."
         }
-        val unexpected = filesToCheck.files.filter { it.canonicalFile !in allowed }
+        val unexpected = filesToCheck.files.filter { sourceOnly || it.canonicalFile !in allowed }
         check(unexpected.isEmpty()) { "Unexpected credential files in APK assets" }
     }
 }
@@ -110,7 +103,9 @@ val verifyStandaloneAuthentication by tasks.registering {
     group = "verification"
     description = "Require the selected runtime authentication files for a standalone car-test APK."
     val directory = localAuthenticationAssets
+    val sourceOnly = sourceOnlyBuild
     doLast {
+        check(!sourceOnly) { "Standalone builds cannot use -PdiplaySourceOnly=true" }
         check(listOf("identity.pk8", "certificate.p7b").all {
             directory.resolve("offline-mfi/$it").let { file -> file.isFile && file.length() > 0 }
         }) { "Standalone CarPlay authentication files are missing or empty" }

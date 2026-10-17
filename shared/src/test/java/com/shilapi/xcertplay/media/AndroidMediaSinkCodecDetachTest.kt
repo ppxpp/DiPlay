@@ -213,6 +213,25 @@ class AndroidMediaSinkCodecDetachTest {
         assertEquals(DetachOutcome.PARKED, detach.requests.single().outcome)
     }
 
+    @Test fun anExpiredSharedDeadlineStillClosesAndTracksTheStuckDecoder() {
+        val surface = newSurface()
+        val sink = configuredSink(surface)
+        holdWorkerInCodec(sink)
+        val stuck = mainDecoder(sink)
+        val expired = System.nanoTime() - 1_000_000L
+        val detach = sink.beginSurfaceDetach(surface, parkMain = false,
+            deadlineNanos = expired, graceDeadlineNanos = expired)
+        assertFalse(detach.await())
+        assertFalse("the stuck decoder is removed from the active registry", decoders(sink).containsValue(stuck))
+        assertTrue("the holder barrier can still see the codec until release",
+            sink.field<Set<Any>>("closingVideoDecoders").contains(stuck))
+        assertFalse(sink.beginSurfaceDetach(surface, parkMain = false,
+            deadlineNanos = expired, graceDeadlineNanos = expired).await())
+        codec.release()
+        sink.close()
+        assertTrue(sink.awaitVideoReleased(5_000))
+    }
+
     @Test fun anUnconfirmedDetachRetiresTheDecoderAndTheNextFrameStartsAFreshOneOnNoSurface() {
         val a = newSurface()
         val c = newSurface()

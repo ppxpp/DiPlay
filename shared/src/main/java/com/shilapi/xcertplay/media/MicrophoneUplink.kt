@@ -29,6 +29,7 @@ internal class MicrophoneUplink(
     private val config: MicrophoneConfig,
     private val onDiagnostic: (String) -> Unit = {},
     private val speakerphoneCall: Boolean = false,
+    private val applicationPackage: String? = null,
     /** The call's far-end audio; when set, telephony capture runs DiPlay's own echo canceller. */
     private val echoReference: EchoReference? = null,
     private val echoCancellerFactory: (Int, Int, Int) -> CallEchoCanceller? = { frame, rate, tail ->
@@ -46,6 +47,7 @@ internal class MicrophoneUplink(
 ) : Closeable {
     private val lwipSession = com.shilapi.xcertplay.pioneer.PioneerLwipRuntime.sessionId
     private var portLease: Closeable? = null
+    private var vehicleMicrophoneLease: PioneerMicrophoneLease? = null
     private val running = AtomicBoolean(false)
     private val stats = MicrophoneCaptureStats(config, report = { message ->
         Log.i(TAG, message)
@@ -58,7 +60,15 @@ internal class MicrophoneUplink(
     @Volatile private var echoCanceller: CallEchoCanceller? = null
     private var thread: Thread? = null
 
-    fun start(): Boolean {
+    fun start(): Boolean = try {
+        startCapture().also { if (!it) release() }
+    } catch (error: Exception) {
+        stats.failure(MicrophoneFailureStage.START, error)
+        release()
+        false
+    }
+
+    private fun startCapture(): Boolean {
         if (!running.compareAndSet(false, true)) return true
 
         val channelMask = if (config.channels >= 2) {
@@ -78,7 +88,11 @@ internal class MicrophoneUplink(
             return false
         }
 
+        if (config.audioType == "telephony") {
+            vehicleMicrophoneLease = PioneerMicrophoneLease.acquire(applicationPackage, onDiagnostic)
+        }
         val source = when {
+            vehicleMicrophoneLease != null -> MediaRecorder.AudioSource.MIC
             config.audioType == "telephony" -> telephonyMicrophoneSource(
                 speakerphoneCall = speakerphoneCall,
                 carPhoneState = PhoneAudioRoute.carPlayCallsUseCarAudio(),
@@ -94,6 +108,11 @@ internal class MicrophoneUplink(
                 }
             else -> MediaRecorder.AudioSource.MIC
         }
+        stats.useSource(when (source) {
+            MediaRecorder.AudioSource.MIC -> "MIC"
+            MediaRecorder.AudioSource.VOICE_RECOGNITION -> "VOICE_RECOGNITION"
+            else -> "VOICE_COMMUNICATION"
+        })
         val nextEncoder = if (config.codec == AudioCodecKind.OPUS) {
             opusEncoderFactory(config.bitrate ?: 48_000)
         } else {
@@ -503,6 +522,7 @@ internal class MicrophoneUplink(
             // Best effort.
         }
         runCatching { portLease?.close() }; portLease = null
+        runCatching { vehicleMicrophoneLease?.close() }; vehicleMicrophoneLease = null
         val currentEncoder = opusEncoder
         opusEncoder = null
         currentEncoder?.close()

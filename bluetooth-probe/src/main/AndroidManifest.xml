@@ -1,6 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <application android:name="androidx.multidex.MultiDexApplication" android:label="CarPlay 蓝牙协商测试" android:theme="@android:style/Theme.Material.NoActionBar" android:allowBackup="false">
         <activity android:name=".ProbeActivity" android:screenOrientation="landscape" android:exported="true">
             <intent-filter>
@@ -8,6 +9,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".UsbBtProbeActivity" android:label="USB 蓝牙模块测试" android:screenOrientation="landscape" android:exported="true" />
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.reports" android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/report_paths" />
         </provider>

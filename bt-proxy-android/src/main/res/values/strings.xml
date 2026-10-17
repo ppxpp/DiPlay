@@ -1,25 +1,150 @@
 <resources>
-    <string name="app_name">DiPlay Bluetooth Proxy</string>
-    <string name="title">Android A · 蓝牙代理 PoC</string>
-    <string name="description">本应用用于 Android A 的蓝牙连接与字节透传验证。请先在系统设置中将本机与 iPhone 配对。</string>
-    <string name="scope">授权蓝牙并配对 iPhone 后，代理会自动启动。B 在同一局域网查找 A 并发起连接；当前开发版使用固定连接码 123456，DiPlay 发现代理后直接连接。代理通过前台服务持续运行，退出本页面不会停止；手动停止后可点击启动恢复。iAP2、认证及 CarPlay 音视频由 B 处理。</string>
-    <string name="query_sdp">查询 SDP 服务</string>
-    <string name="connect_rfcomm">验证 RFCOMM 连接</string>
-    <string name="handshake_iap2">验证 iAP2 双向握手</string>
-    <string name="gateway_pairing_information">配对信息</string>
-    <string name="start_gateway">启动 Wi-Fi 蓝牙透传代理</string>
-    <string name="stop_gateway">停止蓝牙透传代理</string>
-    <string name="disconnect">断开连接</string>
-    <string name="copy_log">复制日志</string>
-    <string name="clear_log">清空日志</string>
-    <string name="communication_ports">通讯端口 · %1$s</string>
-    <string name="no_devices">没有已配对设备，请检查权限和系统蓝牙配对</string>
-    <string name="grant_permission">申请蓝牙权限</string>
+    <string name="app_name">DP无线外挂</string>
+        <string name="proxy_subtitle">蓝牙协商 · Wi-Fi 组网 · 字节透传</string>
+    <string name="version_caption">版本 %1$s</string>
+    <string name="environment_line">%1$s %2$s · Android %3$s（API %4$d）</string>
+
+    <string name="page_settings">设置</string>
+    <string name="log_section">运行日志</string>
+    <string name="diagnostics_entry_summary">SDP / RFCOMM / iAP2 握手，会暂停透传</string>
+    <string name="log_entry_summary">按阶段着色、过滤、复制与清空</string>
+    <string name="settings_entry_summary">配对码、本机蓝牙地址、系统蓝牙设置</string>
+    <string name="about_entry_summary">定位、作用与用法</string>
+
+    <string name="master_switch_start">启动服务</string>
+    <string name="master_switch_stop">关闭服务</string>
+    <string name="nav_target">目标 iPhone</string>
+    <string name="nav_readiness">前置条件</string>
+    <string name="status_section">运行状态</string>
+    <string name="readiness_all_set">全部就绪</string>
+    <string name="readiness_short_summary">%1$d/%2$d 就绪 · %3$s</string>
+    <string name="target_none">未选择设备</string>
+    <string name="action_back">返回</string>
     <string name="open_bluetooth_settings">打开蓝牙设置</string>
-    <string name="refresh">刷新环境状态</string>
-    <string name="environment">设备：%1$s %2$s\nAndroid：%3$s（API %4$d）\n蓝牙：%5$s</string>
-    <string name="bluetooth_unavailable">不支持</string>
-    <string name="bluetooth_permission_missing">未授权，请申请蓝牙权限</string>
-    <string name="bluetooth_on">已开启</string>
-    <string name="bluetooth_off">未开启，请在系统设置中开启</string>
+    <string name="action_refresh">刷新环境状态</string>
+
+    <string name="header_ready">环境就绪</string>
+    <string name="header_blocked">前置条件未完成</string>
+    <string name="header_running">透传中</string>
+    <string name="readiness_title">开始之前</string>
+
+    <string name="readiness_permission">蓝牙权限</string>
+    <string name="readiness_permission_pending">未授权，无法访问已配对设备</string>
+    <string name="readiness_permission_ready">已授权</string>
+    <string name="readiness_bluetooth">蓝牙开关</string>
+    <string name="readiness_bluetooth_pending">未开启</string>
+    <string name="readiness_bluetooth_ready">已开启</string>
+    <string name="readiness_bluetooth_unavailable">本机不支持蓝牙</string>
+    <string name="readiness_pairing">iPhone 配对</string>
+    <string name="readiness_pairing_pending">没有已配对设备</string>
+    <string name="readiness_pairing_ready">已配对 %1$d 台</string>
+    <string name="readiness_mac">本机蓝牙地址</string>
+    <string name="readiness_mac_pending">系统限制读取，需要手动填写一次</string>
+    <string name="readiness_mac_ready">尾号 %1$s</string>
+    <string name="readiness_wifi">Wi-Fi 网络</string>
+    <string name="readiness_wifi_pending">未连接局域网，透传无法监听</string>
+    <string name="readiness_wifi_ready">%1$s · %2$s</string>
+
+    <string name="action_grant">申请</string>
+    <string name="action_open_settings">打开设置</string>
+    <string name="action_fill">填写</string>
+    <string name="action_bluetooth_on">去开启</string>
+    <string name="action_pair">去配对</string>
+    <string name="action_wifi">去连接</string>
+    <string name="action_copy">复制</string>
+    <string name="action_clear">清空</string>
+    <string name="action_save">保存</string>
+    <string name="action_cancel">取消</string>
+
+    <string name="gateway_idle">透传未运行</string>
+    <string name="gateway_listening">透传已启动 · 等待 DiPlay 连接</string>
+    <string name="gateway_discovered">已被 DiPlay 发现 · 等待连接</string>
+    <string name="gateway_authenticated">DiPlay 已连接 · 正在连接 iPhone</string>
+    <string name="gateway_relaying">iPhone 链路已连接 · 正在透传</string>
+    <string name="gateway_stopped">透传已停止</string>
+    <string name="gateway_status_default">等待自动启动</string>
+    <string name="gateway_error_permission">等待蓝牙权限</string>
+    <string name="gateway_error_no_bluetooth">设备不支持蓝牙</string>
+    <string name="gateway_error_bluetooth_off">等待开启蓝牙</string>
+    <string name="gateway_error_no_target">请配对 iPhone；有多台时选择目标并打开透传开关</string>
+
+    <string name="stage_iphone">iPhone</string>
+    <string name="stage_rfcomm">RFCOMM</string>
+    <string name="stage_proxy">无线外挂</string>
+    <string name="stage_wifi">Wi-Fi TCP</string>
+    <string name="stage_diplay">DiPlay</string>
+    <string name="metric_down">iPhone → 本机</string>
+    <string name="metric_up">本机 → DiPlay</string>
+    <string name="metric_session">本次会话</string>
+    <string name="detail_ports">监听 TCP %1$d · UDP %2$d</string>
+    <string name="detail_discovery">发现来源 %1$s</string>
+    <string name="detail_data">DiPlay 端 %1$s</string>
+    <string name="detail_ports_unknown">监听端口未就绪</string>
+
+    <string name="target_section">目标 iPhone</string>
+    <string name="target_empty">没有已配对设备，请在系统蓝牙设置中配对 iPhone 后返回本页。</string>
+    <string name="target_current">当前目标</string>
+
+    <string name="paused_for_probe">诊断模式：透传已暂停</string>
+    <string name="paused_for_probe_summary">诊断独占 RFCOMM 通道，结束后恢复透传。</string>
+    <string name="action_resume_gateway">恢复透传</string>
+
+    <string name="pairing_section">与 DiPlay 配对</string>
+    <string name="pairing_hint">在车机端 DiPlay 的“代理设备”页面找到本机，输入或粘贴此配对码。首次配对后两端自动保存。</string>
+    <string name="pairing_local_mac">本机蓝牙地址</string>
+    <string name="pairing_copy_code">复制配对码</string>
+    <string name="pairing_first_run_title">首次配置</string>
+    <string name="pairing_first_run_message">此 Android 系统限制读取本机蓝牙地址，请填写系统蓝牙设置中显示的本机地址。</string>
+    <string name="pairing_mac_hint">本机蓝牙地址（系统设置中查看）</string>
+    <string name="pairing_mac_invalid">蓝牙地址格式无效</string>
+    <string name="pairing_unavailable">暂时无法生成配对信息</string>
+
+    <string name="diagnostics_section">开发者诊断</string>
+    <string name="diagnostics_intro">诊断会先暂停透传并独占 RFCOMM 通道，结果同时写入运行日志。</string>
+    <string name="query_sdp">查询 SDP 服务</string>
+    <string name="diagnostics_sdp_note">SDP 查询最长 12 秒，仅确认服务可见性。</string>
+    <string name="connect_rfcomm">验证 RFCOMM 连接</string>
+    <string name="diagnostics_rfcomm_note">建连 15 秒超时，成功后只接收观察 10 秒并自动关闭。</string>
+    <string name="handshake_iap2">验证 iAP2 双向握手</string>
+    <string name="diagnostics_iap2_note">双向握手 20 秒超时，仅验证链路，不执行身份识别或认证。</string>
+    <string name="disconnect">断开连接</string>
+    <string name="diagnostics_running">进行中…</string>
+    <string name="diagnostics_none">尚未运行</string>
+    <string name="diagnostics_last">最近结果：%1$s</string>
+
+    <string name="log_empty">暂无日志</string>
+    <string name="log_autoscroll">自动滚动</string>
+    <string name="log_filter_all">全部</string>
+    <string name="log_copied">日志已复制</string>
+    <string name="log_cleared">日志已清空</string>
+    <string name="log_clear_title">清空运行日志？</string>
+    <string name="log_clear_message">只清空本机日志文件，不影响正在运行的透传服务。</string>
+    <string name="log_count">%1$d 行</string>
+
+    <string name="scope">以下五项都满足后，本机才能在 iPhone 与车机端之间透传字节。</string>
+
+    <string name="page_about">关于</string>
+    <string name="about_tagline">iPhone 蓝牙协商 · Wi-Fi 组网 · 字节透传</string>
+    <string name="about_position_title">定位</string>
+    <string name="about_position_body">DP无线外挂 是 DiPlay 车机端的无线外接设备。它不显示 CarPlay 界面，也不解码音频与视频，只负责把 iPhone 的蓝牙链路与车机端的 Wi-Fi 链路接起来，让原本需要 USB 数据线的 CarPlay 握手在无线上完成。</string>
+    <string name="about_role_title">作用</string>
+    <string name="about_role_bluetooth">蓝牙协商：与已配对的 iPhone 建立 RFCOMM / iAP2 链路，完成 ExternalAccessory 需要的协议握手。</string>
+    <string name="about_role_network">Wi-Fi 组网：在本机的 Wi-Fi 网络上监听 TCP 与 UDP 端口，向同一局域网内的 DiPlay 车机端广播自己并接受连接。</string>
+    <string name="about_role_relay">字节透传：在两条链路之间原样搬运字节并统计上下行流量，不解析、不修改协议内容。</string>
+    <string name="about_usage_title">用法</string>
+    <string name="about_usage_1">在“前置条件”中授予蓝牙权限、打开蓝牙、配对 iPhone，并确认本机已连接 Wi-Fi。</string>
+    <string name="about_usage_2">在“目标 iPhone”中选择要接入的 iPhone。</string>
+    <string name="about_usage_3">打开“启动服务”开关；未启动时状态行会给出原因。</string>
+    <string name="about_usage_4">在车机端 DiPlay 的代理设备页面找到本机并输入配对码，当前开发版固定为 123456。</string>
+    <string name="about_usage_5">车机端连上后，“运行状态”里的链路和各段流量会实时变化；退出本页透传仍由前台服务继续。</string>
+    <string name="about_usage_6">需要排查链路问题时进入“开发者诊断”，依次验证 SDP、RFCOMM 与 iAP2 双向握手。</string>
+    <string name="about_notes_title">说明</string>
+    <string name="about_notes_relay">透传运行期间保持前台服务与通知，用于维持蓝牙与网络通道；关闭开关后需要重新打开。</string>
+    <string name="about_notes_mac">部分系统限制读取本机蓝牙地址，此时需要在“设置”中手动填写一次。</string>
+    <string name="about_notes_probe">诊断会先暂停透传并独占 RFCOMM 通道，结束后再恢复。</string>
+    <string name="about_notes_carplay">iAP2 身份识别、认证与 CarPlay 音视频处理都由车机端 DiPlay 完成，本应用不做解码。</string>
+
+    <string name="gateway_notification_channel">蓝牙透传服务</string>
+    <string name="gateway_notification_title">DP无线外挂 · 蓝牙透传</string>
+    <string name="gateway_notification_text">等待 DiPlay 连接与已配对的 iPhone</string>
 </resources>

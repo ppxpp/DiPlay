@@ -1,6 +1,5 @@
 package com.shilapi.xcertplay.vehicle.api
 
-import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioManager
 import com.shilapi.xcertplay.media.AudioChannel
@@ -14,7 +13,6 @@ interface AudioRouteController {
     fun independentSpeechFocus(attributes: AudioAttributes): Boolean
     fun acceptsLegacyStream(stream: Int): Boolean
     fun selectMediaSource(report: (String) -> Unit)
-    fun pauseLocalPlayer(context: Context?, report: (String) -> Unit)
 }
 
 /** Standard Android behavior when no vehicle-specific audio policy is available. */
@@ -27,5 +25,4 @@ object DefaultAudioRouteController : AudioRouteController {
     override fun acceptsLegacyStream(stream: Int) =
         stream in AudioManager.STREAM_SYSTEM..AudioManager.STREAM_ACCESSIBILITY
     override fun selectMediaSource(report: (String) -> Unit) = Unit
-    override fun pauseLocalPlayer(context: Context?, report: (String) -> Unit) = Unit
 }

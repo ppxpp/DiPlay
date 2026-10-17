@@ -1,13 +1,9 @@
 package com.shilapi.xcertplay.vehicle.adapters.pioneer
 
-import android.content.ComponentName
-import android.content.Context
-import android.content.Intent
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Build
-import android.view.KeyEvent
 import com.shilapi.xcertplay.media.AudioChannel
 import com.shilapi.xcertplay.vehicle.api.AudioRouteController
 import com.shilapi.xcertplay.vehicle.api.DefaultAudioRouteController
@@ -56,16 +52,4 @@ internal object PioneerAudioRouteAdapter : AudioRouteController {
         }
     }
 
-    /** The factory player shares source 300; pause it rather than mixing two music players. */
-    override fun pauseLocalPlayer(context: Context?, report: (String) -> Unit) {
-        if (!available || context == null) return
-        runCatching {
-            context.sendBroadcast(Intent(Intent.ACTION_MEDIA_BUTTON).apply {
-                component = ComponentName("com.tencent.wecarflow",
-                    "com.tencent.wecarflow.media.service.MediaButtonIntentReceiver")
-                putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE))
-            })
-            report("Audio: Pioneer factory media player pause dispatched")
-        }.onFailure { report("Audio: Pioneer factory player pause failed: ${it.javaClass.simpleName}") }
-    }
 }

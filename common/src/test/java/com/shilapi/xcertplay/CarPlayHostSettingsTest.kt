@@ -79,6 +79,72 @@ class CarPlayHostSettingsTest {
         controllers.close()
     }
 
+    @Test fun openingUnchangedSettingsReusesThePreparedMenu() {
+        val prepared = menu()
+        invoke("openSettingsMenu")
+        assertSame(prepared, menu())
+        invoke("cancelSettingsEdits")
+        invoke("openSettingsMenu")
+        assertSame(prepared, menu())
+    }
+
+    @Test fun cancellingEditedSettingsInvalidatesCachedControls() {
+        invoke("openSettingsMenu")
+        val before = menu()
+        val savedFps = field("fps")
+        setField("fps", if (savedFps == 60) 30 else 60)
+        invoke("cancelSettingsEdits")
+        invoke("openSettingsMenu")
+        assertNotSame(before, menu())
+        assertEquals(savedFps, field("fps"))
+    }
+
+    @Test fun externallySavedSettingsRebuildCachedControls() {
+        val before = menu()
+        val nextFps = if (field("fps") == 60) 30 else 60
+        AirPlayPersistence.saveFps(activity, nextFps)
+        invoke("openSettingsMenu")
+        assertNotSame(before, menu())
+        assertEquals(nextFps, field("fps"))
+    }
+
+    @Test fun sidePanelStateInvalidatesRenderingWithoutBecomingAnUnsavedEdit() {
+        invoke("openSettingsMenu")
+        val before = menu()
+        invoke("cancelSettingsEdits")
+        setField("sidePanelShown", !(field("sidePanelShown") as Boolean))
+        invoke("openSettingsMenu")
+        assertNotSame(before, menu())
+        assertEquals(invoke("menuSettingsSignature"), field("menuSettingsSignature"))
+    }
+
+    @Test fun iconPreviewReusesDecodedPixelsUntilTheFileChanges() {
+        AirPlayPersistence.clearCustomAirPlayIcon(activity)
+        invoke("openSettingsMenu")
+        fun pixels() = ((field("iconPreviewView") as android.widget.ImageView).drawable
+            as android.graphics.drawable.BitmapDrawable).bitmap
+        val defaultPixels = pixels()
+        invoke("updateAirPlayIconPreview")
+        assertSame(defaultPixels, pixels())
+        val image = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+        val encoded = java.io.ByteArrayOutputStream().apply {
+            image.compress(Bitmap.CompressFormat.PNG, 100, this)
+        }.toByteArray()
+        try {
+            AirPlayPersistence.saveCustomAirPlayIcon(activity, encoded)
+            invoke("updateAirPlayIconPreview")
+            val customPixels = pixels()
+            assertNotSame(defaultPixels, customPixels)
+            invoke("updateAirPlayIconPreview")
+            assertSame(customPixels, pixels())
+            AirPlayPersistence.clearCustomAirPlayIcon(activity)
+            invoke("updateAirPlayIconPreview")
+            assertNotSame(customPixels, pixels())
+        } finally {
+            AirPlayPersistence.clearCustomAirPlayIcon(activity)
+        }
+    }
+
     @Test fun disabledGesturePersistsAndDoesNotOpenTheMenu() {
         AirPlayPersistence.saveSettingsGestureFingers(activity, 0)
         invoke("loadPersistedSettings")

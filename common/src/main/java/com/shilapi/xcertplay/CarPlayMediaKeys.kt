@@ -327,6 +327,18 @@ internal object CarPlayMediaKeys {
         WheelKeyLog.note("media keys active focusDisabled=$focusDisabled focusGranted=$granted")
     }
 
+    /** Called only after the vehicle has returned to its CarPlay-compatible source. */
+    internal fun restoreVehicleSession(expected: CarPlayController, expectedSession: Any, allowed: () -> Boolean) {
+        mainHandler.post {
+            synchronized(this) {
+                if (controller === expected && expected.activeSessionIdentity() === expectedSession && allowed()) {
+                    session?.isActive = true
+                    publishPlaybackStateLocked()
+                }
+            }
+        }
+    }
+
     private fun forwardGrantedFocusLocked() {
         val expectedController = controller ?: return
         val owner = focusOwner ?: return

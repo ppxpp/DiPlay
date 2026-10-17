@@ -9,6 +9,8 @@
         </service>
         <activity android:name=".PioneerDebugActivity" android:exported="false" android:launchMode="singleTop"
             android:label="DiPlay 车机调试" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+        <provider android:name=".ShortcutBarForegroundProvider" android:authorities="${applicationId}.shortcutbar-foreground"
+            android:exported="false" android:initOrder="100" />
         <provider android:name=".PioneerUpdateProvider" android:authorities="${applicationId}.pioneer-updates"
             android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/pioneer_update_paths" />

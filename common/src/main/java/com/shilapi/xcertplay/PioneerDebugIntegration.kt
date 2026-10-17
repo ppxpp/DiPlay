@@ -54,7 +54,8 @@ internal object PioneerDebugIntegration {
         }
     }
     fun attachHost(activity: Activity, state: () -> JSONObject, retryVpn: () -> Unit,
-                   videoGesture: (String) -> JSONObject, videoTap: (JSONObject) -> JSONObject, videoSnapshot: () -> ByteArray) {
+                   videoGesture: (String) -> JSONObject, videoTap: (JSONObject) -> JSONObject, videoSnapshot: () -> ByteArray,
+                   hostUi: (String) -> JSONObject) {
         ensure(activity)
         host = WeakReference(activity)
         retry = retryVpn
@@ -62,6 +63,7 @@ internal object PioneerDebugIntegration {
         PioneerDebugRuntime.videoGesture = videoGesture
         PioneerDebugRuntime.videoTap = videoTap
         PioneerDebugRuntime.videoSnapshot = videoSnapshot
+        PioneerDebugRuntime.hostUi = hostUi
     }
     fun detachHost(activity: Activity) {
         if (host.get() === activity) {
@@ -70,6 +72,7 @@ internal object PioneerDebugIntegration {
             PioneerDebugRuntime.videoGesture = null
             PioneerDebugRuntime.videoTap = null
             PioneerDebugRuntime.videoSnapshot = null
+            PioneerDebugRuntime.hostUi = null
         }
     }
     private fun idleState() = JSONObject().put("hostAttached", false)
@@ -84,6 +87,7 @@ internal object PioneerDebugIntegration {
     private fun startWired(context: Context) {
         CarPlayBackgroundSession.stop {
             main.post {
+                if (com.shilapi.xcertplay.pioneer.PioneerDebugUpdateGuard.isBusy()) return@post
                 host.get()?.finish()
                 AirPlayPersistence.saveWirelessEnabled(context, false)
                 context.startActivity(Intent(context, CarPlayHostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

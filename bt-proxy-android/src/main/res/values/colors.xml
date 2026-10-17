@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DiPlay brand palette (light), mirroring com.shilapi.xcertplay.DiPlayPalette.LIGHT. -->
+<resources>
+    <color name="proxy_background">#E9EEF6</color>
+    <color name="proxy_surface">#F8FAFD</color>
+    <color name="proxy_button">#DCE5F1</color>
+    <color name="proxy_outline">#A7B5C7</color>
+    <color name="proxy_text">#1C1C1E</color>
+    <color name="proxy_text_muted">#5A6474</color>
+    <color name="proxy_accent">#245A9C</color>
+    <color name="proxy_on_accent">#FFFFFF</color>
+    <color name="proxy_success">#286B3F</color>
+    <color name="proxy_warning">#7A4500</color>
+    <color name="proxy_danger">#9B3030</color>
+    <color name="proxy_ripple">#33245A9C</color>
+    <color name="proxy_focus">#245A9C</color>
+    <color name="proxy_scrim">#661B2431</color>
+    <color name="proxy_selected">#D7E5F7</color>
+    <color name="proxy_selected_outline">#91ADD0</color>
+    <color name="proxy_track_on">#245A9C</color>
+</resources>

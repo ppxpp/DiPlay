@@ -209,12 +209,16 @@ object AirPlayInfoPlist {
             "heightPhysical" to heightPhysical,
             "features" to (display.features ?: (DISPLAY_FEATURE_HIGH_FIDELITY_TOUCH or DISPLAY_FEATURE_KNOBS)),
             "primaryInputDevice" to display.primaryInputDevice,
-            // Declare automatic UI/map appearance before runtime setNightMode commands.
-            "uiAppearanceMode" to 0,
-            "uiAppearanceSetting" to 0,
-            "mapAppearanceMode" to 0,
-            "mapAppearanceSetting" to 0,
         )
+
+        // On this wired head unit, omit the newer appearance declarations so the iPhone
+        // follows setNightMode. ON/OFF/ON device comparison verified this on 2026-10-17.
+        if (com.shilapi.xcertplay.pioneer.PioneerPlaybackPolicy.appearanceDeclarationsEnabled) {
+            entry["uiAppearanceMode"] = 0
+            entry["uiAppearanceSetting"] = 0
+            entry["mapAppearanceMode"] = 0
+            entry["mapAppearanceSetting"] = 0
+        }
 
         // Several areas let the car move CarPlay between them (another dock edge, the head unit's split
         // screen) with updateViewArea, without reconnecting.
